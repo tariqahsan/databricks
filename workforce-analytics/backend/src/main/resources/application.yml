@@ -1,0 +1,85 @@
+server:
+  port: 8090
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: workforce-analytics
+
+  # ── Databricks JDBC DataSource ──────────────────────────────────
+  datasource:
+    url: >
+      jdbc:databricks://${DATABRICKS_HOST}:443/default;
+      transportMode=http;ssl=1;
+      httpPath=${DATABRICKS_HTTP_PATH};
+      AuthMech=3;UID=token;PWD=${DATABRICKS_TOKEN}
+    driver-class-name: mil.databricks.client.jdbc.Driver
+    hikari:
+      pool-name: DatabricksPool
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 60000       # 60s — SQL Warehouse cold start
+      idle-timeout: 300000            # 5 min
+      max-lifetime: 1800000           # 30 min
+      validation-timeout: 10000
+      connection-test-query: SELECT 1
+
+  # ── JPA (read-only object mapping via Spring Data JDBC) ─────────
+  jpa:
+    hibernate:
+      ddl-auto: none                  # NEVER let Hibernate touch Databricks schema
+    open-in-view: false
+    show-sql: ${SHOW_SQL:false}
+
+  # ── Cache ────────────────────────────────────────────────────────
+  cache:
+    type: caffeine
+    cache-names:
+      - deptSummary
+      - locationHeadcount
+      - salaryBands
+      - employeePage
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=300s   # 5 min TTL
+
+  # ── CORS (Angular dev server) ────────────────────────────────────
+  web:
+    cors:
+      allowed-origins:
+        - http://localhost:4200
+        - http://localhost:4300
+
+# ── Databricks REST API ──────────────────────────────────────────
+databricks:
+  host: https://${DATABRICKS_HOST}
+  token: ${DATABRICKS_TOKEN}
+  jobs:
+    etl-pipeline-id: ${DATABRICKS_PIPELINE_JOB_ID:1001}
+  warehouse:
+    id: ${DATABRICKS_WAREHOUSE_ID}
+
+# ── Retry Config ─────────────────────────────────────────────────
+retry:
+  databricks:
+    max-attempts: 3
+    initial-interval: 2000
+    multiplier: 2.0
+    max-interval: 15000
+
+# ── Actuator ─────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ── Logging ──────────────────────────────────────────────────────
+logging:
+  level:
+    mil.disa.workforce: DEBUG
+    org.springframework.jdbc: ${SQL_LOG_LEVEL:WARN}
+    mil.zaxxer.hikari: INFO
