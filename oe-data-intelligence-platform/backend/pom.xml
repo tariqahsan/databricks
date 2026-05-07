@@ -82,6 +82,13 @@
       <artifactId>databricks-jdbc</artifactId>
       <version>${databricks-jdbc.version}</version>
     </dependency>
+	
+	<!-- Local dev only — replaces Databricks connection -->
+	<dependency>
+	  <groupId>com.h2database</groupId>
+	  <artifactId>h2</artifactId>
+	  <scope>runtime</scope>
+	</dependency>
 
     <!-- Actuator -->
     <dependency>

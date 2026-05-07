@@ -24,15 +24,23 @@ ScienceLogic        →     raw_sciencelogic            →    Top Issues / Infr
 ```bash
 cd backend
 
-# Required: place these in backend/libs/
-#   DatabricksJDBC42.jar  → from databricks.com/spark/jdbc-drivers
-#   caffeine-3.1.8.jar    → run: .\scripts\download-libs.ps1
+# Run these in your Command Prompt before mvn spring-boot:run
+set DATABRICKS_HOST=your-workspace.databricks.com
+set DATABRICKS_TOKEN=dapi-placeholder-token
+set DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/placeholder
+set DATABRICKS_WAREHOUSE_ID=placeholder
+set DATABRICKS_PIPELINE_JOB_ID=1001
 
-export DATABRICKS_HOST=your-workspace.databricks.com
-export DATABRICKS_TOKEN=dapi...
-export DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/xxx
-export DATABRICKS_WAREHOUSE_ID=xxx
-export DATABRICKS_PIPELINE_JOB_ID=2001
+mvn spring-boot:run
+
+# To run local profile
+mvn spring-boot:run -Dspring-boot.run.profiles=local
+
+# export DATABRICKS_HOST=your-workspace.databricks.com
+# export DATABRICKS_TOKEN=dapi...
+# export DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/xxx
+# export DATABRICKS_WAREHOUSE_ID=xxx
+# export DATABRICKS_PIPELINE_JOB_ID=2001
 
 mvn clean install -DskipTests
 mvn spring-boot:run
