@@ -1,0 +1,91 @@
+server:
+  port: 8091
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: oe-data-intelligence
+
+  # ── Databricks JDBC ─────────────────────────────────────────────
+  datasource:
+    url: >
+      jdbc:databricks://${DATABRICKS_HOST}:443/default;
+      transportMode=http;ssl=1;
+      httpPath=${DATABRICKS_HTTP_PATH};
+      AuthMech=3;UID=token;PWD=${DATABRICKS_TOKEN}
+    driver-class-name: com.databricks.client.jdbc.Driver
+    hikari:
+      pool-name: OE-DatabricksPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 60000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+  # ── Cache ────────────────────────────────────────────────────────
+  cache:
+    type: caffeine
+    cache-names:
+      - appHealth
+      - deviceHealth
+      - networkPerformance
+      - topIssues
+      - versionSprawl
+      - ingestionStatus
+      - platformSummary
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=300s
+
+# ── Databricks REST API ──────────────────────────────────────────
+databricks:
+  host: https://${DATABRICKS_HOST}
+  token: ${DATABRICKS_TOKEN}
+  warehouse:
+    id: ${DATABRICKS_WAREHOUSE_ID}
+  jobs:
+    ingestion-pipeline-id: ${DATABRICKS_PIPELINE_JOB_ID:2001}
+
+# ── Data Source Endpoints (for status monitoring) ────────────────
+datasources:
+  aternity:
+    name: Aternity
+    type: APPLICATION_PERFORMANCE
+  netscout:
+    name: NetScout
+    type: NETWORK_PERFORMANCE
+  intune:
+    name: Microsoft Intune
+    type: DEVICE_MANAGEMENT
+  infoblox:
+    name: Infoblox
+    type: DNS_DHCP_IPAM
+  salesforce:
+    name: Salesforce
+    type: TICKETING_CRM
+  sciencelogic:
+    name: ScienceLogic
+    type: INFRASTRUCTURE_MONITORING
+
+# ── Actuator ─────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ── Logging ──────────────────────────────────────────────────────
+logging:
+  level:
+    mil.disa.oe: DEBUG
+    org.springframework.jdbc: WARN
+    com.zaxxer.hikari: INFO
