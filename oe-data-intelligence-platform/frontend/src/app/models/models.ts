@@ -7,17 +7,20 @@ export interface ApiResponse<T> {
 }
 
 export interface PagedResponse<T> {
-  content: T[];
-  page: number; size: number;
-  totalElements: number; totalPages: number; last: boolean;
+  content:       T[];
+  page:          number;
+  size:          number;
+  totalElements: number;
+  totalPages:    number;
+  last:          boolean;
 }
 
 // ── app-health.model.ts ───────────────────────────────────────────────
 export interface AppHealthKpis {
-  totalApplications: number;
-  healthyApps:       number;
-  degradedApps:      number;
-  criticalApps:      number;
+  totalApplications:  number;
+  healthyApps:        number;
+  degradedApps:       number;
+  criticalApps:       number;
   avgExperienceScore: number;
   avgResponseTimeMs:  number;
   totalActiveUsers:   number;
@@ -57,16 +60,16 @@ export interface AppHealthTrend {
 
 // ── device-health.model.ts ────────────────────────────────────────────
 export interface DeviceHealthKpis {
-  totalDevices:       number;
-  compliantDevices:   number;
+  totalDevices:        number;
+  compliantDevices:    number;
   nonCompliantDevices: number;
-  unknownDevices:     number;
-  complianceRate:     number;
-  avgHealthScore:     number;
+  unknownDevices:      number;
+  complianceRate:      number;
+  avgHealthScore:      number;
   devicesNotCheckedIn: number;
-  encryptedDevices:   number;
-  complianceByType:   ComplianceByType[];
-  osDistribution:     OsDistribution[];
+  encryptedDevices:    number;
+  complianceByType:    ComplianceByType[];
+  osDistribution:      OsDistribution[];
 }
 
 export interface DeviceHealthSummary {
@@ -144,34 +147,44 @@ export interface NetworkPerformanceSummary {
   healthStatus:         HealthStatus;
 }
 
+export interface DnsMetrics {
+  server:          string;
+  totalQueries:    number;
+  failedQueries:   number;
+  failureRate:     number;
+  avgResponseMs:   number;
+  nxdomainCount:   number;
+  timeoutCount:    number;
+}
+
 // ── issues.model.ts ───────────────────────────────────────────────────
 export interface IssuesKpis {
-  openP1Issues:   number;
-  openP2Issues:   number;
-  openP3Issues:   number;
-  openP4Issues:   number;
+  openP1Issues:    number;
+  openP2Issues:    number;
+  openP3Issues:    number;
+  openP4Issues:    number;
   totalOpenIssues: number;
-  resolvedToday:  number;
-  avgMttrHours:   number;
-  slaBreachRate:  number;
-  byCategory:     IssuesByCategory[];
-  trending:       TrendingIssue[];
-  criticalOpen:   TopIssueSummary[];
+  resolvedToday:   number;
+  avgMttrHours:    number;
+  slaBreachRate:   number;
+  byCategory:      IssuesByCategory[];
+  trending:        TrendingIssue[];
+  criticalOpen:    TopIssueSummary[];
 }
 
 export interface TopIssueSummary {
-  issueId:        string;
-  title:          string;
-  category:       string;
-  severity:       string;
-  status:         string;
-  source:         string;
+  issueId:         string;
+  title:           string;
+  category:        string;
+  severity:        string;
+  status:          string;
+  source:          string;
   affectedDevices: number;
-  affectedUsers:  number;
-  openedAt:       string;
-  mttrMinutes:    number;
-  assignedTeam:   string;
-  isRecurring:    boolean;
+  affectedUsers:   number;
+  openedAt:        string;
+  mttrMinutes:     number;
+  assignedTeam:    string;
+  isRecurring:     boolean;
   occurrenceCount: number;
 }
 
@@ -191,22 +204,22 @@ export interface TrendingIssue {
 
 // ── version-sprawl.model.ts ───────────────────────────────────────────
 export interface VersionSprawlKpis {
-  totalSoftwareProducts: number;
-  productsWithSprawl:    number;
-  avgVersionsPerProduct: number;
-  devicesOnLatestOs:     number;
-  devicesOnUnsupportedOs: number;
+  totalSoftwareProducts:   number;
+  productsWithSprawl:      number;
+  avgVersionsPerProduct:   number;
+  devicesOnLatestOs:       number;
+  devicesOnUnsupportedOs:  number;
   appsWithVulnerabilities: number;
-  worstSprawl:           SprawlByProduct[];
-  osVersions:            VersionDistribution[];
-  topAppVersions:        VersionDistribution[];
+  worstSprawl:             SprawlByProduct[];
+  osVersions:              VersionDistribution[];
+  topAppVersions:          VersionDistribution[];
 }
 
 export interface SprawlByProduct {
-  productName:    string;
-  versionCount:   number;
-  deviceCount:    number;
-  latestVersion:  string;
+  productName:     string;
+  versionCount:    number;
+  deviceCount:     number;
+  latestVersion:   string;
   percentOnLatest: number;
 }
 
@@ -245,13 +258,13 @@ export interface IngestionPipelineRun {
 
 // ── platform.model.ts ─────────────────────────────────────────────────
 export interface PlatformSummary {
-  appHealth:         AppHealthKpis;
-  deviceHealth:      DeviceHealthKpis;
+  appHealth:          AppHealthKpis;
+  deviceHealth:       DeviceHealthKpis;
   networkPerformance: NetworkKpis;
-  topIssues:         IssuesKpis;
-  versionSprawl:     VersionSprawlKpis;
+  topIssues:          IssuesKpis;
+  versionSprawl:      VersionSprawlKpis;
   dataSourceStatuses: DataSourceStatus[];
-  asOfTimestamp:     string;
+  asOfTimestamp:      string;
 }
 
 // ── shared ────────────────────────────────────────────────────────────
