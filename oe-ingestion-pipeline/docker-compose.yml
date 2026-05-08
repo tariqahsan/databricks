@@ -1,0 +1,100 @@
+version: "3.8"
+
+# ═══════════════════════════════════════════════════════════════════
+# OE Data Intelligence — Local Docker Stack
+# Same as databricks-local but tuned for OE pipeline
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: oe-spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - ./mock-logs:/opt/bitnami/spark/mock-logs
+      - spark-logs:/opt/bitnami/spark/logs
+    networks: [oe-net]
+
+  spark-worker-1:
+    image: bitnami/spark:3.5
+    container_name: oe-spark-worker-1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+    depends_on: [spark-master]
+    networks: [oe-net]
+
+  jupyter:
+    image: jupyter/pyspark-notebook:spark-3.5.0
+    container_name: oe-jupyter
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=databricks
+      - SPARK_MASTER=spark://spark-master:7077
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT_URL=http://minio:9000
+    ports:
+      - "8888:8888"
+      - "4040:4040"
+    volumes:
+      - ./scripts:/home/jovyan/scripts
+      - ./pipelines:/home/jovyan/pipelines
+      - ./notebooks:/home/jovyan/notebooks
+      - ./mock-logs:/home/jovyan/mock-logs
+      # Reuse spark_session.py from the databricks-local project
+      - ../databricks-local/src/spark_session.py:/home/jovyan/spark_session.py
+    depends_on: [spark-master, minio]
+    networks: [oe-net]
+    command: >
+      bash -c "
+        pip install --quiet delta-spark==3.2.0 boto3 &&
+        start-notebook.sh --NotebookApp.token='databricks'
+      "
+
+  minio:
+    image: minio/minio:latest
+    container_name: oe-minio
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes: [minio-data:/data]
+    networks: [oe-net]
+    command: server /data --console-address ":9001"
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: oe-minio-init
+    depends_on: [minio]
+    networks: [oe-net]
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        mc alias set local http://minio:9000 minioadmin minioadmin;
+        mc mb --ignore-existing local/bronze;
+        mc mb --ignore-existing local/silver;
+        mc mb --ignore-existing local/gold;
+        echo 'OE buckets ready: bronze / silver / gold';
+      "
+
+volumes:
+  minio-data:
+  spark-logs:
+
+networks:
+  oe-net:
+    name: oe-intelligence-network
