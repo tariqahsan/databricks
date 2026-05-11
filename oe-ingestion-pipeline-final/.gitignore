@@ -1,0 +1,38 @@
+# Generated mock log files (created by generate_mock_logs.py at runtime)
+mock-logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Spark temp files
+derby.log
+metastore_db/
+spark-warehouse/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit real credentials
+.env
+*.token
+secrets/
+
+# Docker volumes (managed by Docker, not Git)
+volumes/
