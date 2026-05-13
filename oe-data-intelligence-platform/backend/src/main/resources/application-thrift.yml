@@ -1,0 +1,44 @@
+spring:
+  config:
+    activate:
+      on-profile: thrift
+
+  # Spark Thrift Server — same HiveServer2 protocol as Databricks SQL Warehouse.
+  # Moving to AWS = change this URL only. All SQL is identical.
+  datasource:
+    url: jdbc:hive2://localhost:10000/default
+    driver-class-name: org.apache.hive.jdbc.HiveDriver
+    username: ""
+    password: ""
+    hikari:
+      pool-name: ThriftPool
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 60000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=200,expireAfterWrite=60s
+
+databricks:
+  host: https://local-thrift-not-used
+  token: not-used
+  warehouse:
+    id: thrift-local
+  jobs:
+    ingestion-pipeline-id: 9999
+
+oe:
+  datasource:
+    gold-prefix: "gold"
+    silver-prefix: "silver"
+
+logging:
+  level:
+    mil.disa.oe: DEBUG
+    org.springframework.web: INFO
+    org.apache.hive: WARN

@@ -1,0 +1,68 @@
+server:
+  port: 8091
+
+spring:
+  application:
+    name: oe-data-intelligence
+
+  datasource:
+    url: "jdbc:databricks://${DATABRICKS_HOST}:443/default;\
+          transportMode=http;\
+          ssl=1;\
+          httpPath=${DATABRICKS_HTTP_PATH};\
+          AuthMech=3;\
+          UID=token;\
+          PWD=${DATABRICKS_TOKEN}"
+    driver-class-name: com.databricks.client.jdbc.Driver
+    hikari:
+      pool-name: OE-DatabricksPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 60000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+  cache:
+    type: caffeine
+    cache-names:
+      - appHealth
+      - deviceHealth
+      - networkPerformance
+      - topIssues
+      - versionSprawl
+      - ingestionStatus
+      - platformSummary
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=300s
+
+databricks:
+  host: https://${DATABRICKS_HOST}
+  token: ${DATABRICKS_TOKEN}
+  warehouse:
+    id: ${DATABRICKS_WAREHOUSE_ID}
+  jobs:
+    ingestion-pipeline-id: ${DATABRICKS_PIPELINE_JOB_ID:2001}
+
+# Gold/Silver prefix — change to "main.gold" when Unity Catalog is enabled
+oe:
+  datasource:
+    gold-prefix: "gold"
+    silver-prefix: "silver"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    mil.disa.oe: INFO
+    org.springframework.jdbc: WARN
+    com.zaxxer.hikari: WARN

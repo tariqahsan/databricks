@@ -1,0 +1,35 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  datasource:
+    url: jdbc:h2:mem:oeplatform;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+    hikari:
+      pool-name: LocalH2Pool
+      maximum-pool-size: 3
+      connection-test-query: SELECT 1
+
+  profiles:
+    active: local,mock
+
+databricks:
+  host: https://mock.databricks.com
+  token: dapi-mock-not-used
+  warehouse:
+    id: mock
+  jobs:
+    ingestion-pipeline-id: 9999
+
+oe:
+  datasource:
+    gold-prefix: "gold"
+    silver-prefix: "silver"
+
+logging:
+  level:
+    mil.disa.oe: DEBUG
+    org.springframework.web: INFO

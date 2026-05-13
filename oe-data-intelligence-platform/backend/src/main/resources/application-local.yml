@@ -1,24 +1,35 @@
-# Local development — placeholder values until real Databricks workspace available
 spring:
   config:
     activate:
       on-profile: local
 
-  # Override datasource to use H2 in-memory DB for local dev
-  # (no real Databricks connection needed to start the app)
   datasource:
-    url: jdbc:h2:mem:oeplatform;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:oeplatform;DB_CLOSE_DELAY=-1;MODE=MySQL
     driver-class-name: org.h2.Driver
     username: sa
     password:
     hikari:
+      pool-name: LocalH2Pool
+      maximum-pool-size: 3
       connection-test-query: SELECT 1
 
-# Placeholder values — Spring won't throw on missing env vars
+  profiles:
+    active: local,mock
+
 databricks:
-  host: https://placeholder.databricks.com
-  token: dapi-placeholder
+  host: https://mock.databricks.com
+  token: dapi-mock-not-used
   warehouse:
-    id: placeholder-warehouse
+    id: mock
   jobs:
-    ingestion-pipeline-id: 1001
+    ingestion-pipeline-id: 9999
+
+oe:
+  datasource:
+    gold-prefix: "gold"
+    silver-prefix: "silver"
+
+logging:
+  level:
+    mil.disa.oe: DEBUG
+    org.springframework.web: INFO

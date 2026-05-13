@@ -1,5 +1,7 @@
 # OE Data Intelligence Platform — Local Databricks-Equivalent Stack
-# Jupyter fix: use image defaults, install packages via Dockerfile-style init
+# FIX: spark-thrift-server uses spark-submit (not spark-class)
+#      spark-class does not accept --conf or --master flags
+#      spark-submit properly handles all Spark configuration args
 
 services:
 
@@ -40,6 +42,49 @@ services:
       - oe-net
     entrypoint: /opt/spark/bin/spark-class
     command: "org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+
+  # ── Spark Thrift Server ────────────────────────────────────────────
+  # Local equivalent of Databricks SQL Warehouse.
+  # Spring Boot connects: jdbc:hive2://localhost:10000/default
+  # Uses spark-submit so --master and --conf flags are accepted.
+  spark-thrift-server:
+    image: apache/spark:3.5.3
+    container_name: oe-spark-thrift
+    hostname: spark-thrift
+    user: root
+    ports:
+      - "10000:10000"
+      - "4041:4040"
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - oe-net
+    entrypoint: /opt/spark/bin/spark-submit
+    command: >
+      --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2
+      --master local[2]
+      --name OE-ThriftServer
+      --hiveconf hive.server2.thrift.port=10000
+      --hiveconf hive.server2.thrift.bind.host=0.0.0.0
+      --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+      --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+      --conf spark.jars.packages=io.delta:delta-spark_2.12:3.2.0,org.apache.hadoop:hadoop-aws:3.3.4
+      --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000
+      --conf spark.hadoop.fs.s3a.access.key=minioadmin
+      --conf spark.hadoop.fs.s3a.secret.key=minioadmin
+      --conf spark.hadoop.fs.s3a.path.style.access=true
+      --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+      --conf spark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+      --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false
+      --conf spark.sql.shuffle.partitions=4
+      --conf spark.driver.memory=2g
 
   jupyter:
     image: jupyter/pyspark-notebook:spark-3.5.0

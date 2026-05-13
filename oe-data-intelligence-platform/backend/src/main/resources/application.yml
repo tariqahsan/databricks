@@ -1,19 +1,18 @@
 server:
   port: 8091
-  servlet:
-    context-path: /
 
 spring:
   application:
     name: oe-data-intelligence
 
-  # ── Databricks JDBC ─────────────────────────────────────────────
   datasource:
-    url: >
-      jdbc:databricks://${DATABRICKS_HOST}:443/default;
-      transportMode=http;ssl=1;
-      httpPath=${DATABRICKS_HTTP_PATH};
-      AuthMech=3;UID=token;PWD=${DATABRICKS_TOKEN}
+    url: "jdbc:databricks://${DATABRICKS_HOST}:443/default;\
+          transportMode=http;\
+          ssl=1;\
+          httpPath=${DATABRICKS_HTTP_PATH};\
+          AuthMech=3;\
+          UID=token;\
+          PWD=${DATABRICKS_TOKEN}"
     driver-class-name: com.databricks.client.jdbc.Driver
     hikari:
       pool-name: OE-DatabricksPool
@@ -29,7 +28,6 @@ spring:
       ddl-auto: none
     open-in-view: false
 
-  # ── Cache ────────────────────────────────────────────────────────
   cache:
     type: caffeine
     cache-names:
@@ -43,7 +41,6 @@ spring:
     caffeine:
       spec: maximumSize=500,expireAfterWrite=300s
 
-# ── Databricks REST API ──────────────────────────────────────────
 databricks:
   host: https://${DATABRICKS_HOST}
   token: ${DATABRICKS_TOKEN}
@@ -52,40 +49,20 @@ databricks:
   jobs:
     ingestion-pipeline-id: ${DATABRICKS_PIPELINE_JOB_ID:2001}
 
-# ── Data Source Endpoints (for status monitoring) ────────────────
-datasources:
-  aternity:
-    name: Aternity
-    type: APPLICATION_PERFORMANCE
-  netscout:
-    name: NetScout
-    type: NETWORK_PERFORMANCE
-  intune:
-    name: Microsoft Intune
-    type: DEVICE_MANAGEMENT
-  infoblox:
-    name: Infoblox
-    type: DNS_DHCP_IPAM
-  salesforce:
-    name: Salesforce
-    type: TICKETING_CRM
-  sciencelogic:
-    name: ScienceLogic
-    type: INFRASTRUCTURE_MONITORING
+# Gold/Silver prefix — change to "main.gold" when Unity Catalog is enabled
+oe:
+  datasource:
+    gold-prefix: "gold"
+    silver-prefix: "silver"
 
-# ── Actuator ─────────────────────────────────────────────────────
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
-  endpoint:
-    health:
-      show-details: when-authorized
+        include: health,info
 
-# ── Logging ──────────────────────────────────────────────────────
 logging:
   level:
-    mil.disa.oe: DEBUG
+    mil.disa.oe: INFO
     org.springframework.jdbc: WARN
-    com.zaxxer.hikari: INFO
+    com.zaxxer.hikari: WARN
