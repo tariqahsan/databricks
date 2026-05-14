@@ -1,7 +1,4 @@
 # OE Data Intelligence Platform — Local Databricks-Equivalent Stack
-# FIX: spark-thrift-server uses spark-submit (not spark-class)
-#      spark-class does not accept --conf or --master flags
-#      spark-submit properly handles all Spark configuration args
 
 services:
 
@@ -43,10 +40,6 @@ services:
     entrypoint: /opt/spark/bin/spark-class
     command: "org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
 
-  # ── Spark Thrift Server ────────────────────────────────────────────
-  # Local equivalent of Databricks SQL Warehouse.
-  # Spring Boot connects: jdbc:hive2://localhost:10000/default
-  # Uses spark-submit so --master and --conf flags are accepted.
   spark-thrift-server:
     image: apache/spark:3.5.3
     container_name: oe-spark-thrift
@@ -92,19 +85,31 @@ services:
     hostname: jupyter
     environment:
       - JUPYTER_TOKEN=databricks
-      - SPARK_MASTER=spark://spark-master:7077
+      # ── Use local[2] — avoids Spark 3.5.0 (Jupyter) vs 3.5.3
+      # (worker) version mismatch that causes InvalidClassException
+      - SPARK_MASTER=local[2]
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_ENDPOINT_URL=http://minio:9000
+      # ── Eliminates all sys.path hacks in Python scripts ──────────
+      # project root  → finds pipelines package + run_pipeline.py
+      # project/src   → finds spark_session module
+      - PYTHONPATH=/home/jovyan/project:/home/jovyan/project/src
     ports:
       - "8888:8888"
       - "4040:4040"
     volumes:
-      - ./sample-logs:/home/jovyan/sample-logs
-      - ./pipelines:/home/jovyan/pipelines
-      - ./notebooks:/home/jovyan/notebooks
-      - ./src:/home/jovyan/src
-      - ./start-jupyter.sh:/usr/local/bin/start-jupyter.sh
+      # Single project-root bind mount — no individual file mounts
+      - .:/home/jovyan/project
+      # ── Key fix: mount into before-notebook.d so the image
+      # automatically runs pip install BEFORE launching JupyterLab.
+      # Previously mounted to /usr/local/bin/start-jupyter.sh which
+      # was never called by anything in the startup sequence.
+      - ./start-jupyter.sh:/usr/local/bin/before-notebook.d/00-install-deps.sh
+    working_dir: /home/jovyan/project
+    # start.sh runs before-notebook.d scripts then launches jupyter.
+    # --notebook-dir opens JupyterLab at the project root by default.
+    command: start.sh jupyter lab --notebook-dir=/home/jovyan/project
     depends_on:
       spark-master:
         condition: service_healthy

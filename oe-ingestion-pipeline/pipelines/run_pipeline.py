@@ -1,27 +1,31 @@
 """
-run_pipeline.py
+run_pipeline.py  (v2 — Real Schema Edition)
 Master pipeline runner — executes full Bronze → Silver → Gold for all 6 sources.
 
 Usage (from inside Jupyter or terminal in the Docker container):
-    python pipelines/run_pipeline.py
+    python run_pipeline.py
 
 Or step by step:
     python scripts/generate_mock_logs.py --days 3
-    python pipelines/run_pipeline.py
+    python run_pipeline.py
+
+Sources:
+    NETCOOL     · DXNETOPS    · ElastiFlow
+    Netscout App · Netscout Throughput · DataNX
 """
-import sys, os, time, subprocess
+import sys, os, time
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from spark_session import get_spark
 
 from pipelines.bronze.ingest_all_sources import (
-    ingest_aternity, ingest_netscout, ingest_intune,
-    ingest_infoblox, ingest_salesforce, ingest_sciencelogic
+    ingest_netcool, ingest_dxnetops, ingest_elastiflow,
+    ingest_netscout_app, ingest_netscout_throughput, ingest_datanx
 )
 from pipelines.silver.transform_all import (
-    silver_app_performance, silver_network_metrics,
-    silver_device_inventory, silver_dns_metrics,
-    silver_incidents, silver_infrastructure
+    silver_netcool, silver_dxnetops, silver_elastiflow,
+    silver_netscout_app, silver_netscout_throughput, silver_datanx
 )
 from pipelines.gold.aggregate_all import (
     gold_app_health_summary, gold_network_performance,
@@ -33,8 +37,8 @@ from pipelines.gold.aggregate_all import (
 def run():
     print("=" * 65)
     print("  OE DATA INTELLIGENCE PLATFORM — FULL MEDALLION PIPELINE")
-    print("  Sources: Aternity · NetScout · Intune · Infoblox ·")
-    print("           Salesforce · ScienceLogic")
+    print("  Sources: NETCOOL · DXNETOPS · ElastiFlow ·")
+    print("           Netscout App · Netscout Throughput · DataNX")
     print("=" * 65)
 
     spark = get_spark("OE-Full-Pipeline")
@@ -46,12 +50,12 @@ def run():
         print("  🥉  BRONZE — Raw Log Ingestion")
         print("─" * 50)
         t = time.time()
-        ingest_aternity(spark)
-        ingest_netscout(spark)
-        ingest_intune(spark)
-        ingest_infoblox(spark)
-        ingest_salesforce(spark)
-        ingest_sciencelogic(spark)
+        ingest_netcool(spark)
+        ingest_dxnetops(spark)
+        ingest_elastiflow(spark)
+        ingest_netscout_app(spark)
+        ingest_netscout_throughput(spark)
+        ingest_datanx(spark)
         print(f"\n  ⏱  Bronze complete in {time.time()-t:.1f}s")
 
         # ── SILVER ───────────────────────────────────────────────────
@@ -59,12 +63,12 @@ def run():
         print("  🥈  SILVER — Cleanse & Transform")
         print("─" * 50)
         t = time.time()
-        silver_app_performance(spark)
-        silver_network_metrics(spark)
-        silver_device_inventory(spark)
-        silver_dns_metrics(spark)
-        silver_incidents(spark)
-        silver_infrastructure(spark)
+        silver_netcool(spark)
+        silver_dxnetops(spark)
+        silver_elastiflow(spark)
+        silver_netscout_app(spark)
+        silver_netscout_throughput(spark)
+        silver_datanx(spark)
         print(f"\n  ⏱  Silver complete in {time.time()-t:.1f}s")
 
         # ── GOLD ─────────────────────────────────────────────────────
@@ -87,14 +91,14 @@ def run():
         print(f"  ✅  PIPELINE COMPLETE in {elapsed:.1f}s")
         print("=" * 65)
         print("""
-  Gold tables ready for API queries:
-    gold/app_health_summary        → /api/app-health
-    gold/network_performance_summary → /api/network-performance
-    gold/packet_loss_root_cause    → /api/network-performance/kpis
-    gold/device_health_summary     → /api/device-health
-    gold/dns_metrics               → /api/network-performance/dns
-    gold/top_issues_summary        → /api/top-issues
-    gold/version_sprawl_summary    → /api/version-sprawl
+  Gold tables ready for Spring Boot API:
+    gold/app_health_summary           → /api/app-health
+    gold/network_performance_summary  → /api/network-performance
+    gold/packet_loss_root_cause       → /api/network-performance/kpis
+    gold/device_health_summary        → /api/device-health
+    gold/dns_metrics                  → /api/network-performance/dns
+    gold/top_issues_summary           → /api/top-issues
+    gold/version_sprawl_summary       → /api/version-sprawl
     gold/data_source_ingestion_status → /api/data-sources
         """)
 

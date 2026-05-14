@@ -1,623 +1,711 @@
 #!/usr/bin/env python3
 """
-generate_mock_logs.py
-Generates realistic raw system logs for all 6 OE data sources.
-Run this script to produce log files that the ingestion pipeline will consume.
+generate_mock_logs.py  (v2 — Real Schema Edition)
+Generates realistic raw logs matching the ACTUAL source schemas:
+  1. NETCOOL      — network event/alert JSON
+  2. DXNETOPS     — device CPU/performance metrics JSON
+  3. ElastiFlow   — IPFIX network flow records JSON
+  4. Netscout App — application performance JSON
+  5. Netscout Throughput — bandwidth throughput JSON
+  6. DataNX       — network inventory JSON (system, port, inventory)
+
+Gold tables produced (unchanged — Spring Boot API depends on these names):
+  gold/app_health_summary
+  gold/network_performance_summary
+  gold/packet_loss_root_cause
+  gold/device_health_summary
+  gold/dns_metrics
+  gold/top_issues_summary
+  gold/version_sprawl_summary
+  gold/data_source_ingestion_status
 
 Usage:
-    python generate_mock_logs.py
-    python generate_mock_logs.py --days 7  (generate 7 days of history)
+    python scripts/generate_mock_logs.py
+    python scripts/generate_mock_logs.py --days 3
 """
 
-import json
-import csv
-import random
-import argparse
+import json, csv, random, argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# ── Output directories ────────────────────────────────────────────────
-BASE = Path(__file__).parent / "mock-logs"
+BASE = Path(__file__).parent.parent / "mock-logs"
+NOW  = datetime.utcnow()
+TODAY = NOW.strftime("%Y%m%d")
 
-APPS = [
-    "Microsoft Teams", "Outlook Web App", "ServiceNow", "Salesforce CRM",
-    "SAP ERP", "NIPR Email", "SIPR Portal", "SharePoint Online",
-    "Microsoft Office 365", "DEERS Online", "myPay (DFAS)",
-    "Defense Travel System", "iPERMS", "AKO Portal", "GCSS-Army"
-]
 
-DEVICES = [
-    ("DEV-001","TARIQ-LAPTOP","LAPTOP","Windows","11 23H2","tariq.richardson@mail.mil","Arlington VA"),
-    ("DEV-002","SYSADMIN-DT-01","DESKTOP","Windows","10 21H2","j.smith@mail.mil","Fort Meade MD"),
-    ("DEV-003","MOBILE-SGT-01","MOBILE","iOS","17.4","sgt.johnson@mail.mil","Fort Bragg NC"),
-    ("DEV-004","TABLET-LT-01","TABLET","Android","13","lt.williams@mail.mil","Pentagon DC"),
-    ("DEV-005","LAPTOP-CIV-01","LAPTOP","Windows","11 23H2","m.jones@mail.mil","Arlington VA"),
-    ("DEV-006","DESKTOP-IT-02","DESKTOP","Windows","11 22H2","it.support@disa.mil","Fort Meade MD"),
-    ("DEV-007","LAPTOP-SES-01","LAPTOP","Windows","11 23H2","ses.director@disa.mil","Arlington VA"),
-    ("DEV-008","DESKTOP-OLD-01","DESKTOP","Windows","7 SP1","legacy.user@mail.mil","Fort Belvoir VA"),
-    ("DEV-009","LAPTOP-CYBER-01","LAPTOP","Windows","11 23H2","cyber.analyst@disa.mil","Fort Meade MD"),
-    ("DEV-010","MOBILE-GEN-02","MOBILE","iOS","16.7","gen.officer@mail.mil","Pentagon DC"),
-    ("DEV-011","LAPTOP-FIN-01","LAPTOP","Windows","10 22H2","finance.clerk@mail.mil","Arlington VA"),
-    ("DEV-012","DESKTOP-HR-01","DESKTOP","Windows","11 22H2","hr.specialist@mail.mil","Fort Meade MD"),
-    ("DEV-013","LAPTOP-OPS-01","LAPTOP","Windows","8.1","ops.analyst@mail.mil","Pentagon DC"),
-    ("DEV-014","MOBILE-SFC-01","MOBILE","Android","14","sfc.jones@mail.mil","Fort Bragg NC"),
-    ("DEV-015","LAPTOP-CIO-01","LAPTOP","Windows","11 23H2","cio.staff@disa.mil","Arlington VA"),
-]
-
-SEGMENTS = [
-    ("DISA-WAN-DC-01",       "WAN",        "Washington DC"),
-    ("DISA-WAN-PENTAGON",    "WAN",        "Pentagon"),
-    ("DISA-WAN-MEADE-01",   "WAN",        "Fort Meade MD"),
-    ("DISA-LAN-ARLINGTON-01","LAN",        "Arlington VA"),
-    ("DISA-LAN-ARLINGTON-02","LAN",        "Arlington VA"),
-    ("DISA-CLOUD-AWS-E1",    "CLOUD",      "AWS us-east-1"),
-    ("DISA-CLOUD-AWS-W1",    "CLOUD",      "AWS us-west-2"),
-    ("DISA-WAN-BRAGG",       "WAN",        "Fort Bragg NC"),
-    ("DISA-WAN-BELVOIR",     "WAN",        "Fort Belvoir VA"),
-    ("DISA-DC-CORE-01",      "DATACENTER", "Ogden UT"),
-    ("DISA-DC-CORE-02",      "DATACENTER", "Columbus OH"),
-]
-
-DNS_SERVERS = [
-    "dns-primary-meade.disa.mil",
-    "dns-secondary-arlington.disa.mil",
-    "dns-backup-belvoir.disa.mil",
-    "dns-cloud-aws-east.disa.mil",
-]
-
-ROOT_CAUSES = [
-    "CONGESTION","HARDWARE_DEGRADATION","LINK_SATURATION",
-    "DUPLEX_MISMATCH","MTU_MISMATCH","BGP_INSTABILITY","NORMAL"
-]
-
-ISSUE_CATEGORIES = ["NETWORK","APPLICATION","DEVICE","SECURITY","INFRASTRUCTURE"]
-SEVERITIES = ["P1","P2","P3","P4"]
-TEAMS = ["OE Network Team","Device Management Team","Cybersecurity Team",
-         "Infrastructure Team","DNS/DHCP Team","Application Team"]
-
-def ts_range(days=1):
-    """Generate timestamps over the last N days."""
-    now = datetime.now()
-    start = now - timedelta(days=days)
-    records = int(days * 2000 / 1)
-    return [start + timedelta(seconds=random.randint(0, int(days*86400)))
-            for _ in range(records)]
-
-def fmt(dt):
+def fmt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-def is_peak(dt):
-    h = dt.hour
-    return 8 <= h <= 18
+def rand_dt(days: int) -> datetime:
+    return NOW - timedelta(seconds=random.randint(0, int(days * 86400)))
 
-def packet_loss_for_segment(seg_id, dt):
-    """Simulate realistic packet loss — higher during peak hours."""
-    base = {
-        "DISA-WAN-DC-01": 3.2, "DISA-WAN-PENTAGON": 2.4,
-        "DISA-WAN-MEADE-01": 1.8, "DISA-LAN-ARLINGTON-01": 1.2,
-        "DISA-LAN-ARLINGTON-02": 0.9, "DISA-CLOUD-AWS-E1": 0.8,
-        "DISA-CLOUD-AWS-W1": 0.7, "DISA-WAN-BRAGG": 0.6,
-        "DISA-WAN-BELVOIR": 0.5, "DISA-DC-CORE-01": 0.2,
-        "DISA-DC-CORE-02": 0.2,
-    }.get(seg_id, 0.3)
-    multiplier = 1.4 if is_peak(dt) else 0.6
-    return round(base * multiplier * random.uniform(0.7, 1.3), 3)
+def rand_ip(private=True):
+    if private:
+        return f"10.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
+    return f"{random.randint(33,99)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
+
+def rand_mac():
+    return ":".join(f"{random.randint(0,255):02x}" for _ in range(6))
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 1. ATERNITY — App Performance Logs (JSON)
-#    Format: one JSON object per line (JSONL)
-#    Fields: timestamp, app_name, user_id, session_id, response_time_ms,
-#            experience_score, page_load_ms, crash_flag, error_code,
-#            client_os, location
-# ─────────────────────────────────────────────────────────────────────
-def generate_aternity(days):
-    out = BASE / "aternity"
+# ── Static reference data ────────────────────────────────────────────
+
+THEATERS = [
+    ("CENTRAL", "TNC-CENT", "CAAS", "AL ASAD AIR BASE",   33.78, 42.44),
+    ("PACIFIC", "TNC-PAC",  "PFTB", "FORT BUCKNER",       26.33, 127.80),
+    ("EUROPE",  "TNC-EUR",  "RAMN", "RAMSTEIN AB",         49.43, 7.60),
+    ("CONUS",   "TNC-CONT", "BLTM", "FORT MEADE",         39.10, -76.77),
+    ("PACIFIC", "TNC-PAC",  "YOKT", "YOKOTA AB",          35.74, 139.34),
+    ("CENTRAL", "TNC-CENT", "KBGM", "BAGRAM",             34.94, 69.26),
+]
+
+NODES = [
+    "ufscaas02a", "ufscaas03b", "uwrhpmdxn-col01", "utfpftb450",
+    "ujepcpz040", "ujewfew040", "ujepyks030", "ujbwpjz020",
+    "ujepfst030", "ujewcol030", "ujewpax030", "ujecald030",
+    "ujewdru040", "unpwpnt011", "unpwnis005", "unpwnis006",
+    "ummwsco930", "uvrwsna030", "umswmac120", "urdwpnt020",
+]
+
+DEVICE_TYPES = ["umm", "urc", "utf", "uje", "unp"]
+
+APPLICATIONS = [
+    ("Microsoft Teams",        "COLLABORATION",  "RAVPN",   0.12),
+    ("Outlook Web App",        "EMAIL",          "NIPR",    0.09),
+    ("ServiceNow",             "ITSM",           "NIPR",    0.06),
+    ("SharePoint Online",      "COLLABORATION",  "NIPR",    0.05),
+    ("Salesforce CRM",         "CRM",            "NIPR",    0.04),
+    ("SAP ERP",                "ERP",            "NIPR",    0.08),
+    ("NIPR Email",             "EMAIL",          "NIPR",    0.05),
+    ("myPay (DFAS)",           "FINANCE",        "NIPR",    0.03),
+    ("Defense Travel System",  "FINANCE",        "NIPR",    0.03),
+    ("GCSS-Army",              "ERP",            "SIPR",    0.06),
+    ("DEERS Online",           "HR",             "NIPR",    0.04),
+    ("Audio",                  "UC",             "RAVPN",   0.10),
+    ("DTLS",                   "SECURITY",       "RAVPN",   0.07),
+    ("Apple",                  "INTERNET",       "INTERNET",0.05),
+    ("Google",                 "INTERNET",       "INTERNET",0.04),
+]
+
+INTERFACES = [
+    "NIS-IAP_to_DJI (ISP)_40G-1",
+    "NIS-IAP_to_DJI (ISP)_40G-2",
+    "NIS-IAP_to_DJI (NIPR)_40G-1",
+    "NIS-IAP_to_DJI (NIPR)_40G-2",
+    "PNT-IAP_to_DJI (ISP)_40G-1",
+    "IAP_Uplink_10G-1",
+    "WAN_Circuit_1G",
+    "MPLS_Core_100G",
+]
+
+SENSORS = [
+    "UNPWPNT011:::B860-B960::UIAWPNT010::AE1-210::UIGWPNT010::AE1::",
+    "UNPWNIS005:::BFN4-BHN4::UIAWNIS010::AE1-210::UIGWNIS010::AE1::",
+    "UNPWNIS006:::BFN4-BHN4::UIAWNIS010::AE1-200::UIGWNIS010::AE1::",
+    "UNPWNIS007:::BFN4-BHN4::UIAWNIS010::AE1-300::UIGWNIS010::AE1::",
+    "UNPWPNT012:::C860-C960::UIAWPNT012::AE1-210::UIGWPNT012::AE1::",
+]
+
+ALERT_GROUPS = [
+    ("ITNM Monitor",     "NmosPingFail",      5, "Device DOWN or UNREACHABLE. This device is no longer responding to PING requests."),
+    ("ITNM Monitor",     "NmosLinkDown",      4, "Interface link down — carrier loss detected on monitored port."),
+    ("ITNM Monitor",     "NmosCPUHigh",       3, "CPU utilization exceeded 85% threshold on network device."),
+    ("ITNM Monitor",     "NmosMemoryHigh",    3, "Memory utilization exceeded 90% threshold on network device."),
+    ("ITNM Monitor",     "NmosBGPDown",       5, "BGP peer session down — routing table may be incomplete."),
+    ("ITNM Monitor",     "NmosLinkFlap",      4, "Interface flapping detected — link went up/down 5 times in 10 minutes."),
+    ("THRESHOLD",        "BandwidthHigh",     3, "Interface bandwidth utilization exceeded 80% — potential congestion."),
+    ("THRESHOLD",        "PacketLossHigh",    4, "Packet loss rate exceeded 2% threshold on WAN link."),
+    ("THRESHOLD",        "LatencyHigh",       3, "Round-trip latency exceeded 150ms on monitored path."),
+    ("SECURITY",         "UnauthorizedAccess",4, "Unauthorized access attempt detected — multiple failed auth events."),
+    ("SECURITY",         "AnomalousDNS",      3, "Suspicious DNS query pattern detected — possible C2 beacon."),
+]
+
+HARDWARE_PARTS = [
+    ("800-25216-06", "CE-100T-8",  "WMUCA4PFAB"),
+    ("800-17168-02", "WS-X6748-GE-TX", "CNMYA5PFAA"),
+    ("800-28030-01", "ASR1001-X",  "FPMMA6PEAB"),
+    ("800-33886-01", "N9K-C9396PX","CMUEA5PFAB"),
+    ("800-40482-01", "ISR4451-X",  "BPMYA6PFAA"),
+    ("800-12024-01", "C3750G-48PS","CNUYA5PEAB"),
+]
+
+CCSD_LABELS = ["6NV9","6SJ8","6TK9","7AB1","7CD2","8EF3","8GH4","9IJ5"]
+
+VLANS = [100, 200, 210, 300, 400, 500, 600, 700]
+
+CODECS = ["Opus", "G.711", "G.729", "G.722", "SILK"]
+
+METRIC_FAMILIES = [
+    ("NormalizedCPUInfo",    "CPU",         "cpuUsageMonitoringInterval", "Utilization", "CPUUtilizationLastMin"),
+    ("NormalizedMemoryInfo", "Memory",      "memUsageMonitoringInterval", "Utilization", "MemoryUtilizationLastMin"),
+    ("NormalizedInterfaceInfo","Interface", "ifSpeed",                    "Utilization", "InterfaceUtilizationLastMin"),
+]
+
+NETSCOUT_APPS = [
+    ("Microsoft Teams", "COLLABORATION", "NIPR"),
+    ("Audio",           "MULTIMEDIA",    "RAVPN"),
+    ("DTLS",            "RAVPN",         "RAVPN"),
+    ("Apple",           "Internet",      "Internet"),
+    ("Microsoft",       "Internet",      "Internet"),
+    ("Google",          "Internet",      "Internet"),
+    ("Zoom",            "MULTIMEDIA",    "NIPR"),
+    ("SharePoint",      "COLLABORATION", "NIPR"),
+    ("SAP",             "ERP",           "NIPR"),
+    ("Salesforce",      "CRM",           "NIPR"),
+]
+
+NETSCOUT_SITES = [
+    "EBI-Intercept-164", "EBI_SIP-DIP-017", "TNC-Core-01",
+    "TNC-Edge-02",       "DISA-Cloud-East", "DISA-Cloud-West",
+    "Pentagon-Core",     "FtMeade-Core",
+]
+
+FLOW_HOSTS = [
+    ("UJBWPJZ020", "33.20.2.154"),
+    ("UJEWDRU040", "33.20.2.85"),
+    ("UJEPCPZ040", "33.20.130.149"),
+    ("UJEWFEW040", "33.20.2.253"),
+    ("UJEWCOL030", "33.20.0.12"),
+    ("UJEWPAX030", "33.20.0.194"),
+    ("UJEPFST030", "33.20.128.181"),
+    ("UJEPYOK040", "33.20.130.136"),
+    ("UJECALD030", "33.20.224.241"),
+    ("UJEPYKS030", "33.20.128.152"),
+]
+
+
+# ════════════════════════════════════════════════════════════════════
+# 1. NETCOOL — Network Event / Alert JSON
+#    → gold.top_issues_summary
+# ════════════════════════════════════════════════════════════════════
+def generate_netcool(days: int):
+    out = BASE / "netcool"
     out.mkdir(parents=True, exist_ok=True)
-
-    # App performance scores — Teams and Outlook are degraded
-    app_profiles = {
-        "Microsoft Teams":    {"base_score": 42, "base_rt": 1800, "crash_rate": 0.04},
-        "Outlook Web App":    {"base_score": 48, "base_rt": 2100, "crash_rate": 0.03},
-        "ServiceNow":         {"base_score": 60, "base_rt": 900,  "crash_rate": 0.01},
-        "Salesforce CRM":     {"base_score": 64, "base_rt": 750,  "crash_rate": 0.01},
-        "SAP ERP":            {"base_score": 66, "base_rt": 680,  "crash_rate": 0.01},
-        "NIPR Email":         {"base_score": 72, "base_rt": 420,  "crash_rate": 0.004},
-        "SharePoint Online":  {"base_score": 84, "base_rt": 270,  "crash_rate": 0.001},
-        "Microsoft Office 365":{"base_score":94, "base_rt": 168,  "crash_rate": 0.0002},
-        "DEERS Online":       {"base_score": 90, "base_rt": 200,  "crash_rate": 0.0005},
-        "myPay (DFAS)":       {"base_score": 87, "base_rt": 212,  "crash_rate": 0.0003},
-        "Defense Travel System":{"base_score":88,"base_rt": 220,  "crash_rate": 0.0003},
-        "GCSS-Army":          {"base_score": 92, "base_rt": 185,  "crash_rate": 0.0002},
-    }
 
     records = []
-    now = datetime.now()
-    for _ in range(int(days * 2500)):
-        dt     = now - timedelta(seconds=random.randint(0, int(days*86400)))
-        app    = random.choice(list(app_profiles.keys()))
-        device = random.choice(DEVICES)
-        prof   = app_profiles[app]
+    for i in range(int(days * 800)):
+        dt      = rand_dt(days)
+        theater = random.choice(THEATERS)
+        node    = random.choice(NODES)
+        alert   = random.choice(ALERT_GROUPS)
+        ag, eid, sev, summary = alert
+        th_name, oc, qc, loc, lat, lon = theater
 
-        # Peak hours make things worse for degraded apps
-        peak_factor = 1.6 if is_peak(dt) and prof["base_score"] < 70 else 1.0
-        rt  = int(prof["base_rt"] * peak_factor * random.uniform(0.6, 1.8))
-        score = max(0, min(100,
-            prof["base_score"] - (peak_factor-1)*15 + random.gauss(0, 5)))
-        crash = random.random() < prof["crash_rate"] * peak_factor
+        first_occ = dt - timedelta(minutes=random.randint(0, 1440))
+        tally     = random.randint(1, 60000)
+        serial    = random.randint(1_000_000_000, 2_999_999_999)
+        node_ip   = rand_ip()
+        remote_ip = rand_ip(private=False)
 
-        error_codes = {
-            "Microsoft Teams": ["TEAMS_ERR_4001","TEAMS_ERR_4002","TEAMS_CALL_DROP","NONE"],
-            "Outlook Web App": ["OWA_SYNC_FAIL","OWA_TIMEOUT","OWA_AUTH_ERR","NONE"],
-            "ServiceNow":      ["SN_DB_TIMEOUT","SN_POOL_EXHAUSTED","NONE"],
-            "SAP ERP":         ["SAP_RFC_FAIL","SAP_LOCK_TIMEOUT","NONE"],
+        rec = {
+            "@timestamp":            fmt(dt),
+            "@version":              "1",
+            "Acknowledged":          random.randint(0, 1),
+            "Agent":                 "ncp_poller",
+            "AlertGroup":            ag,
+            "AlertKey":              f"{node}.eur.dcn.disn.mil->{eid}{oc}",
+            "CEAEventScore":         0,
+            "Class":                 8000,
+            "EquipId":               "FS",
+            "EventId":               eid,
+            "ExpireTime":            43200,
+            "FirstOccurrence":       int(first_occ.timestamp() * 1000),
+            "Flash":                 0,
+            "GMS_OperationsArea":    "IP",
+            "GMS_OperationsCenter":  oc,
+            "GMS_QCode":             qc,
+            "GMS_SecurityCommunity": f"{oc}_{qc}",
+            "GMS_Theater":           th_name,
+            "Identifier":            f"{node}.eur.dcn.disn.mil->{eid}1{oc}",
+            "LastOccurrence":        int(dt.timestamp() * 1000),
+            "LocalNodeAlias":        f"{node}.eur.dcn.disn.mil",
+            "Location":              loc,
+            "Manager":               "ITNM",
+            "MasterSerial":          serial,
+            "NetcoolEventAction":    random.choice(["insert", "update"]),
+            "NmosCauseType":         random.randint(0, 3),
+            "NmosDomainName":        f"{oc}01",
+            "Node":                  node,
+            "NodeAlias":             node_ip,
+            "RemoteNodeAlias":       remote_ip,
+            "Severity":              sev,
+            "StateChange":           int(dt.timestamp() * 1000),
+            "Summary":               summary,
+            "Tally":                 tally,
+            "Type":                  1,
+            "SuppressEscl":          0,
+            "SelectedForServiceNow": random.randint(0, 1),
+            "Service":               "DCN",
+            "host": {
+                "geo":      {"lat": lat + random.uniform(-0.1, 0.1),
+                             "lon": lon + random.uniform(-0.1, 0.1)},
+                "hostname": node.upper(),
+                "ip":       node_ip,
+                "location": {"quad_code": qc, "site": {"name": loc, "theater": th_name}},
+            },
+            "event": {
+                "severity":   sev,
+                "alarm": {
+                    "summary": summary,
+                    "serial":  serial,
+                    "alert":   {"group": ag, "key": f"{node}->{eid}"},
+                },
+                "timestamp": {
+                    "last_occurence": fmt(dt),
+                    "state_change":   fmt(dt),
+                },
+                "timestamp_created": fmt(first_occ),
+            },
+            "netcool": {
+                "alarm": {"tally": tally},
+                "event": {"id": eid},
+                "manager": "ITNM",
+            },
         }
-        errs = error_codes.get(app, ["NONE","APP_GENERIC_ERR"])
-        err  = random.choice(errs) if crash else "NONE"
+        records.append(rec)
 
-        records.append({
-            "timestamp":        fmt(dt),
-            "app_name":         app,
-            "user_id":          device[6].split("@")[0],
-            "user_email":       device[6],
-            "device_id":        device[0],
-            "device_name":      device[1],
-            "session_id":       f"SES-{random.randint(100000,999999)}",
-            "response_time_ms": rt,
-            "page_load_ms":     int(rt * random.uniform(0.4, 0.8)),
-            "experience_score": round(score, 1),
-            "crash_flag":       crash,
-            "error_code":       err,
-            "client_os":        device[3] + " " + device[4],
-            "location":         device[6].split("@")[0] + " - " + device[5] if False else device[5],
-            "network_segment":  random.choice([s[0] for s in SEGMENTS]),
-            "data_source":      "ATERNITY",
-        })
-
-    records.sort(key=lambda r: r["timestamp"])
-    with open(out / f"aternity_performance_{now.strftime('%Y%m%d')}.jsonl", "w") as f:
+    records.sort(key=lambda r: r["@timestamp"])
+    path = out / f"netcool_events_{TODAY}.jsonl"
+    with open(path, "w") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
-    print(f"  ✅ Aternity: {len(records):,} records")
+    print(f"  ✅ NETCOOL: {len(records):,} records → {path}")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 2. NETSCOUT — Network Flow / SNMP Trap Logs (CSV)
-#    Format: CSV with header
-#    Fields: timestamp, segment_id, segment_type, location,
-#            src_ip, dst_ip, protocol, bytes_in, bytes_out,
-#            packet_loss_pct, latency_ms, jitter_ms,
-#            bandwidth_util_pct, anomaly_flag, anomaly_type
-# ─────────────────────────────────────────────────────────────────────
-def generate_netscout(days):
-    out = BASE / "netscout"
+# ════════════════════════════════════════════════════════════════════
+# 2. DXNETOPS — Device CPU / Performance Metrics JSON
+#    → gold.device_health_summary (metrics enrichment)
+# ════════════════════════════════════════════════════════════════════
+def generate_dxnetops(days: int):
+    out = BASE / "dxnetops"
     out.mkdir(parents=True, exist_ok=True)
-    now = datetime.now()
 
-    ip_pools = {
-        "DISA-WAN-DC-01":    ("198.18.10.0","198.18.10.255"),
-        "DISA-WAN-PENTAGON": ("198.18.20.0","198.18.20.255"),
-        "DISA-WAN-MEADE-01": ("198.18.30.0","198.18.30.255"),
-        "DISA-LAN-ARLINGTON-01":("10.20.1.0","10.20.1.255"),
-        "DISA-CLOUD-AWS-E1": ("172.31.0.0", "172.31.255.255"),
-        "DISA-DC-CORE-01":   ("10.100.0.0", "10.100.255.255"),
-    }
+    records = []
+    poll_group_ids = [6068, 6069, 6070, 7001, 7002]
 
-    anomaly_types = {
-        "DISA-WAN-DC-01":    "CONGESTION",
-        "DISA-WAN-PENTAGON": "HARDWARE_DEGRADATION",
-        "DISA-WAN-MEADE-01": "LINK_SATURATION",
-        "DISA-LAN-ARLINGTON-01": "DUPLEX_MISMATCH",
-        "DISA-CLOUD-AWS-E1": "MTU_MISMATCH",
-        "DISA-WAN-BRAGG":    "BGP_INSTABILITY",
-    }
+    for _ in range(int(days * 2000)):
+        dt       = rand_dt(days)
+        cycle_dt = dt.replace(second=0, microsecond=0)
+        # round to 5-min boundary
+        cycle_dt = cycle_dt - timedelta(minutes=cycle_dt.minute % 5)
+        theater  = random.choice(THEATERS)
+        th_name, oc, qc, loc, lat, lon = theater
+        node     = random.choice(NODES)
+        mf_tpl   = random.choice(METRIC_FAMILIES)
+        mf_name, mf_display, metric1, metric2, metric3 = mf_tpl
+        util     = random.randint(2, 98)
 
-    rows = [["timestamp","segment_id","segment_type","location",
-             "src_ip","dst_ip","protocol","bytes_in","bytes_out",
-             "packet_loss_pct","latency_ms","jitter_ms",
-             "bandwidth_util_pct","anomaly_flag","anomaly_type",
-             "data_source"]]
+        records.append({
+            "pollGroupID":              random.choice(poll_group_ids),
+            "readTimestamp":            fmt(dt),
+            "readTimestampMS":          int(dt.timestamp() * 1000),
+            "cycleTimestamp":           cycle_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "cycleTimestampMS":         int(cycle_dt.timestamp() * 1000),
+            "km":                       "true",
+            "metricFamilyDisplayName":  mf_display,
+            "metricFamily":             mf_name,
+            "dcmID":                    f"{node}-col{random.randint(1,4):02d}",
+            "skip":                     False,
+            "pollRateMS":               300000,
+            "itemID":                   random.randint(1_000_000, 9_999_999),
+            "deviceItemID":             random.randint(1_000_000, 9_999_999),
+            "equipt_type":              random.choice(DEVICE_TYPES).upper(),
+            "tenantID":                 1,
+            "componentName":            f"{mf_display} {random.randint(0,31)}",
+            "ifDescr":                  f"interface Revised Cisco {mf_display} {random.randint(0,31)}",
+            "topic_name":               "disa-pm-ls-dxnetops-metric-export",
+            "@timestamp":               fmt(dt),
+            "@version":                 "1",
+            "host": {
+                "hostname":    node.upper(),
+                "ip":          rand_ip(),
+                "quadcode":    qc,
+                "tricode":     qc[1:4] if len(qc) >= 4 else qc,
+                "geo_location": {"lon": lon + random.uniform(-0.05, 0.05),
+                                 "lat": lat + random.uniform(-0.05, 0.05)},
+                "location": {
+                    "country":       th_name,
+                    "theater":       th_name[0],
+                    "quad_code":     qc,
+                    "site_name":     loc,
+                    "site_short_name": loc.replace(" ", ""),
+                    "device_name":   f"U{th_name[0]}E{qc[1:]}010",
+                },
+            },
+            "metrics": {
+                metric1:  0,
+                metric2:  util,
+                metric3:  util,
+                f"{metric2}Average5Seconds": max(0, util - random.randint(0, 5)),
+            },
+        })
 
+    records.sort(key=lambda r: r["@timestamp"])
+    path = out / f"dxnetops_metrics_{TODAY}.jsonl"
+    with open(path, "w") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+    print(f"  ✅ DXNETOPS: {len(records):,} records → {path}")
+
+
+# ════════════════════════════════════════════════════════════════════
+# 3. ELASTIFLOW — IPFIX Network Flow Records JSON
+#    → gold.network_performance_summary + packet_loss_root_cause
+# ════════════════════════════════════════════════════════════════════
+def generate_elastiflow(days: int):
+    out = BASE / "elastiflow"
+    out.mkdir(parents=True, exist_ok=True)
+
+    templates = [256, 257, 258, 259, 260, 261, 262, 263, 266, 268, 313, 338]
+    transports = ["tcp", "udp", "icmp", "hopopt", "sctp"]
+    directions = ["ingress", "egress", "unknown (255)"]
+    reasons    = ["Idle Timeout", "Active Timeout", "End of Flow"]
+    locales    = ["public", "private"]
+
+    records = []
     for _ in range(int(days * 3000)):
-        dt  = now - timedelta(seconds=random.randint(0, int(days*86400)))
-        seg = random.choice(SEGMENTS)
-        sid, stype, loc = seg
-        loss    = packet_loss_for_segment(sid, dt)
-        latency = round(random.uniform(8, 90) * (1 + loss/2), 1)
-        jitter  = round(latency * random.uniform(0.05, 0.25), 2)
-        bw_util = round(random.uniform(20, 60) + (loss * 10), 1)
-        bw_util = min(bw_util, 99.9)
-        anomaly = loss > 1.5 or bw_util > 80
-        atype   = anomaly_types.get(sid, "NORMAL") if anomaly else "NONE"
+        dt        = rand_dt(days)
+        host_name, host_ip = random.choice(FLOW_HOSTS)
+        template  = random.choice(templates)
+        transport = random.choice(transports)
+        pkts      = random.randint(1, 5000) * 1000 if random.random() < 0.3 else random.randint(1, 100)
+        nbytes    = pkts * random.randint(60, 1500)
+        is_public = random.random() > 0.4
+        locality  = "public" if is_public else "private"
+        as_label  = "PUBLIC" if is_public else "PRIVATE"
+        src_ip    = rand_ip(private=not is_public)
+        dst_ip    = rand_ip(private=not is_public)
+        src_port  = random.randint(1024, 65535)
+        dst_port  = random.choice([80, 443, 53, 22, 8080, 10003, 500, 4500])
+        ingested  = int(dt.timestamp() * 1000)
+        created   = int(dt.timestamp() * 1000)
+        start_dt  = dt - timedelta(seconds=random.randint(1, 300))
+        end_ms    = int(dt.timestamp() * 1000)
 
-        pool    = ip_pools.get(sid, ("10.0.0.0","10.0.255.255"))
-        src_oct = random.randint(1,254)
-        dst_oct = random.randint(1,254)
-
-        rows.append([
-            fmt(dt), sid, stype, loc,
-            f"{pool[0].rsplit('.',1)[0]}.{src_oct}",
-            f"{pool[0].rsplit('.',1)[0]}.{dst_oct}",
-            random.choice(["TCP","UDP","ICMP","HTTPS","RTP"]),
-            random.randint(1000, 10_000_000),
-            random.randint(500,  5_000_000),
-            loss, latency, jitter, bw_util,
-            anomaly, atype, "NETSCOUT"
-        ])
-
-    rows[1:] = sorted(rows[1:], key=lambda r: r[0])
-    with open(out / f"netscout_flows_{now.strftime('%Y%m%d')}.csv", "w",
-              newline="") as f:
-        csv.writer(f).writerows(rows)
-    print(f"  ✅ NetScout: {len(rows)-1:,} records")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 3. INTUNE — Device Management Export (JSON)
-#    Format: JSONL
-#    Fields: device_id, device_name, device_type, os_name, os_version,
-#            compliance_state, last_check_in, assigned_user,
-#            encryption_enabled, firewall_enabled, antivirus_enabled,
-#            health_score, management_agent, location, patch_level
-# ─────────────────────────────────────────────────────────────────────
-def generate_intune(days):
-    out = BASE / "intune"
-    out.mkdir(parents=True, exist_ok=True)
-    now = datetime.now()
-
-    compliance_rules = {
-        "7 SP1":  "NON_COMPLIANT",   # Win7 always non-compliant
-        "8.1":    "NON_COMPLIANT",   # Win8 always non-compliant
-        "16.7":   "NON_COMPLIANT",   # Old iOS
-        "13":     "NON_COMPLIANT",   # Old Android
-    }
-
-    records = []
-    for _ in range(int(days * 400)):
-        dt  = now - timedelta(seconds=random.randint(0, int(days*86400)))
-        dev = random.choice(DEVICES)
-        did, dname, dtype, os_name, os_ver, user, loc = dev
-
-        # Force non-compliant for old OS versions
-        compliance = compliance_rules.get(os_ver, None)
-        if compliance is None:
-            # Some healthy devices occasionally go non-compliant
-            compliance = "NON_COMPLIANT" if random.random() < 0.12 else "COMPLIANT"
-
-        # Old devices get low health scores
-        old_os = os_ver in ("7 SP1","8.1","16.7","13")
-        health = round(random.uniform(10,40) if old_os
-                       else random.uniform(65,99), 1)
-        encrypted = not old_os and compliance == "COMPLIANT"
-
-        # Devices not checked in if non-compliant
-        last_checkin = (now - timedelta(days=random.randint(8,60))
-                        if compliance == "NON_COMPLIANT" and random.random() < 0.5
-                        else dt)
-
-        patches = {
-            "11 23H2": "KB5036980", "11 22H2": "KB5036979",
-            "10 22H2": "KB5036892", "10 21H2": "KB5036891",
-            "7 SP1":   "KB2534111", "8.1":     "KB2919355",
-            "17.4":    "17.4.1",    "16.7":    "16.7.8",
-            "14":      "14.1",      "13":      "13.0.0",
+        rec = {
+            "event.category":           "network",
+            "host.ip":                  host_ip,
+            "host.name":                host_name,
+            "agent.type":               "elastiflow-unified-collector",
+            "agent.version":            "7.16.0",
+            "event.module":             "flow",
+            "event.kind":               "event",
+            "event.type":               "connection",
+            "event.outcome":            "unknown",
+            "event.dataset":            "ipfix",
+            "flow.export.version.name": "IPFIX",
+            "flow.export.version.ver":  10,
+            "flow.template.id":         template,
+            "record.type":              "flow",
+            "ecs.version":              "8.0.0",
+            "event.ingested":           ingested,
+            "event.created":            created,
+            "event.start":              fmt(start_dt),
+            "event.end":                end_ms,
+            "event.reason":             random.choice(reasons),
+            "network.bytes":            nbytes,
+            "network.packets":          pkts,
+            "source.bytes":             nbytes,
+            "source.packets":           pkts,
+            "network.transport":        transport,
+            "network.type":             random.choice(["ipv4", "ipv6"]),
+            "network.direction":        random.choice(directions),
+            "source.ip":                src_ip,
+            "destination.ip":           dst_ip,
+            "source.port":              src_port,
+            "destination.port":         dst_port,
+            "flow.locality":            locality,
+            "flow.src.as.label":        as_label,
+            "flow.dst.as.label":        as_label,
+            "as.label":                 [as_label],
+            "flow.export.l4.port.id":   random.randint(14000, 62000),
+            "flow.meter.observ.domain.id": random.randint(2000, 999999),
+            "flow.meter.packet_select.interval.packets": random.choice([1, 1000]),
+            "observer.ingress.interface.id": random.randint(500, 1999),
+            "observer.egress.interface.id":  random.randint(500, 1999),
+            "observer.ingress.interface.name": f"index: {random.randint(500,1999)}",
+            "observer.egress.interface.name":  f"index: {random.randint(500,1999)}",
+            "source.as.number":         0,
+            "destination.as.number":    0,
+            "ip.version.ver":           4,
+            "ip.frag.id":               0,
         }
 
-        records.append({
-            "timestamp":          fmt(dt),
-            "device_id":          did,
-            "device_name":        dname,
-            "device_type":        dtype,
-            "os_name":            os_name,
-            "os_version":         os_ver,
-            "compliance_state":   compliance,
-            "last_check_in":      fmt(last_checkin),
-            "assigned_user":      user,
-            "location":           loc,
-            "encryption_enabled": encrypted,
-            "firewall_enabled":   compliance == "COMPLIANT",
-            "antivirus_enabled":  compliance == "COMPLIANT",
-            "antivirus_definition_date": (now - timedelta(
-                days=0 if compliance=="COMPLIANT" else random.randint(30,180)
-            )).strftime("%Y-%m-%d"),
-            "health_score":       health,
-            "management_agent":   "INTUNE" if os_ver not in ("7 SP1","8.1")
-                                  else "GPO",
-            "enrollment_status":  "ENROLLED" if compliance=="COMPLIANT"
-                                  else "ENROLLED_NON_COMPLIANT",
-            "patch_level":        patches.get(os_ver, "UNKNOWN"),
-            "jailbroken":         False,
-            "data_source":        "INTUNE",
-        })
+        # Add TCP flags for TCP flows
+        if transport == "tcp":
+            rec["tcp.flags.bits"] = random.choice([2, 16, 18, 24])
+            rec["tcp.flags.tags"] = random.choice([["SYN"], ["ACK"], ["SYN", "ACK"], ["PSH", "ACK"]])
+            rec["l4.session.established"] = "true" if rec["tcp.flags.bits"] in [16, 18, 24] else "false"
 
-    records.sort(key=lambda r: r["timestamp"])
-    with open(out / f"intune_devices_{now.strftime('%Y%m%d')}.jsonl", "w") as f:
+        records.append(rec)
+
+    path = out / f"elastiflow_flows_{TODAY}.jsonl"
+    with open(path, "w") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
-    print(f"  ✅ Intune: {len(records):,} records")
+    print(f"  ✅ ElastiFlow: {len(records):,} records → {path}")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 4. INFOBLOX — DNS Query Logs (Syslog format)
-#    Format: plain text syslog (RFC 5424-ish)
-#    Fields: timestamp, server, client_ip, query_name, query_type,
-#            response_code, response_time_ms, view, category
-# ─────────────────────────────────────────────────────────────────────
-def generate_infoblox(days):
-    out = BASE / "infoblox"
+# ════════════════════════════════════════════════════════════════════
+# 4. NETSCOUT APP — Application Performance JSON
+#    → gold.app_health_summary
+# ════════════════════════════════════════════════════════════════════
+def generate_netscout_app(days: int):
+    out = BASE / "netscout_app"
     out.mkdir(parents=True, exist_ok=True)
-    now = datetime.now()
-
-    domains = [
-        "teams.microsoft.com","outlook.office365.com","sharepoint.com",
-        "login.microsoftonline.com","disa.mil","mail.mil","pentagon.mil",
-        "army.mil","navy.mil","af.mil","usmc.mil","health.mil",
-        "servicenow.com","salesforce.com","sap.com","s3.amazonaws.com",
-        "s3.us-gov-west-1.amazonaws.com","ec2.us-gov-east-1.amazonaws.com",
-        "invalid-host.badactor.xyz","malware-c2.suspicious.net",  # bad traffic
-        "nonexistent.mil","typo.sharepointonline.com",            # NXDOMAIN
-    ]
-    response_codes = ["NOERROR","NXDOMAIN","SERVFAIL","REFUSED","TIMEOUT"]
-    query_types    = ["A","AAAA","MX","CNAME","TXT","PTR","SRV"]
-
-    lines = []
-    for _ in range(int(days * 8000)):
-        dt     = now - timedelta(seconds=random.randint(0, int(days*86400)))
-        server = random.choice(DNS_SERVERS)
-        domain = random.choice(domains)
-
-        # Primary server is degraded — higher latency and failure rates
-        is_primary = "primary" in server
-        base_ms = 380 if is_primary else random.uniform(1, 15)
-        resp_ms = round(base_ms * random.uniform(0.8, 1.4), 2)
-
-        # Bad domains get NXDOMAIN or REFUSED
-        if "invalid" in domain or "suspicious" in domain:
-            rcode = random.choice(["NXDOMAIN","REFUSED"])
-        elif "nonexistent" in domain or "typo" in domain:
-            rcode = "NXDOMAIN"
-        elif is_primary and random.random() < 0.08:
-            rcode = random.choice(["SERVFAIL","TIMEOUT"])
-        else:
-            rcode = "NOERROR"
-
-        client_ip = f"10.{random.randint(1,254)}.{random.randint(1,254)}.{random.randint(1,254)}"
-        ts_syslog = dt.strftime("%b %d %H:%M:%S")
-
-        # RFC 5424 syslog format
-        line = (f"{ts_syslog} {server} named[1234]: "
-                f"client {client_ip}#53: "
-                f"query: {domain} IN {random.choice(query_types)} "
-                f"response: {rcode} "
-                f"({resp_ms}ms)")
-        lines.append((fmt(dt), line))
-
-    lines.sort(key=lambda x: x[0])
-    with open(out / f"infoblox_dns_{now.strftime('%Y%m%d')}.log", "w") as f:
-        for _, line in lines:
-            f.write(line + "\n")
-    print(f"  ✅ Infoblox: {len(lines):,} records")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 5. SALESFORCE — Case/Ticket Export (CSV)
-#    Format: CSV with header
-#    Fields: case_number, subject, description, priority, status,
-#            category, opened_date, closed_date, assigned_team,
-#            affected_devices, affected_users, root_cause,
-#            sla_breached, mttr_minutes
-# ─────────────────────────────────────────────────────────────────────
-def generate_salesforce(days):
-    out = BASE / "salesforce"
-    out.mkdir(parents=True, exist_ok=True)
-    now = datetime.now()
-
-    issue_templates = [
-        # (subject, category, priority, root_cause, affected_users)
-        ("Microsoft Teams voice/video failure on WAN links", "APPLICATION", "P1",
-         "High packet loss on DISA-WAN-DC-01 causing RTP stream drops", 3200),
-        ("DISA-WAN-DC-01 packet loss exceeding threshold", "NETWORK", "P1",
-         "Link congestion — peak hour traffic saturation", 0),
-        ("Pentagon WAN router hardware degradation", "NETWORK", "P2",
-         "ASR 1001-X hardware fault — error counters rising", 0),
-        ("Devices not checking in to Intune MDM", "DEVICE", "P2",
-         "Network policy blocking MDM traffic on VPN profile", 1284),
-        ("Infoblox primary DNS elevated latency", "NETWORK", "P2",
-         "DNS forwarder misconfiguration after patch Tuesday", 0),
-        ("Windows 7/8 devices failing compliance checks", "SECURITY", "P2",
-         "Legacy hardware unable to upgrade OS — STIG violation", 2418),
-        ("Outlook Web App slow sync on mobile devices", "APPLICATION", "P3",
-         "Exchange Online throttling — connector config issue", 820),
-        ("ServiceNow DB connection pool exhaustion", "APPLICATION", "P3",
-         "Background job contention during month-end close", 1250),
-        ("VPN tunnel drops during peak hours", "NETWORK", "P3",
-         "IKEv2 renegotiation timeout under load", 480),
-        ("SAP month-end batch job failures", "APPLICATION", "P3",
-         "Lock contention on accounting tables", 2800),
-        ("SharePoint search indexing delay", "APPLICATION", "P4",
-         "Search indexer behind by 4 hours — low disk I/O", 3600),
-        ("Antivirus definition updates failing on 200 devices", "SECURITY", "P3",
-         "McAfee ePO server certificate expired", 200),
-        ("NIPR email delivery delay — 30 min queue backup", "COMMUNICATION", "P3",
-         "SMTP relay configuration issue after firewall update", 5200),
-        ("MFA failures for PIV/CAC users — Pentagon building", "SECURITY", "P2",
-         "Card reader firmware incompatibility with Win11 22H2", 380),
-        ("GCSS-Army inventory module unavailable", "APPLICATION", "P2",
-         "Database failover did not complete successfully", 1600),
-        ("myPay DFAS login loop after password expiration", "APPLICATION", "P3",
-         "Password policy enforcement timing issue", 2900),
-        ("BGP route instability — Fort Bragg WAN", "NETWORK", "P3",
-         "ISP route flapping — 14 withdrawals in 60 minutes", 0),
-        ("Azure AD SSO token timeout — 2-hour sessions", "SECURITY", "P3",
-         "Conditional access policy token lifetime too short", 9200),
-        ("Defense Travel System PDF generation failure", "APPLICATION", "P4",
-         "Adobe Acrobat Reader DC version mismatch on server", 1800),
-        ("Splunk SIEM alert storm — 40K low-priority events", "SECURITY", "P4",
-         "Correlation rule too broad after tuning change", 320),
-    ]
-
-    rows = [["case_number","subject","description","priority","status",
-             "category","opened_date","closed_date","assigned_team",
-             "affected_devices","affected_users","root_cause",
-             "sla_breached","mttr_minutes","is_recurring",
-             "occurrence_count","source_system","data_source"]]
-
-    for i, tmpl in enumerate(issue_templates):
-        subj, cat, pri, rc, affected = tmpl
-        opened = now - timedelta(hours=random.randint(1, int(days*24)))
-        status = "OPEN" if pri in ("P1","P2") and random.random()<0.7 else \
-                 "IN_PROGRESS" if random.random()<0.5 else "RESOLVED"
-        mttr   = None
-        closed = None
-        if status == "RESOLVED":
-            mttr   = random.randint(60, 480)
-            closed = opened + timedelta(minutes=mttr)
-
-        sla_threshold = {"P1":60,"P2":240,"P3":480,"P4":1440}
-        sla_breached  = (mttr or 9999) > sla_threshold.get(pri, 9999)
-
-        rows.append([
-            f"INC-2024-0{8800+i:04d}", subj, f"Issue reported: {subj}", pri,
-            status, cat,
-            opened.strftime("%Y-%m-%d %H:%M:%S"),
-            closed.strftime("%Y-%m-%d %H:%M:%S") if closed else "",
-            random.choice(TEAMS), 0, affected, rc,
-            sla_breached, mttr or "",
-            random.random() < 0.3,
-            random.randint(1,8) if random.random()<0.3 else 1,
-            "SALESFORCE", "SALESFORCE"
-        ])
-
-    with open(out / f"salesforce_cases_{now.strftime('%Y%m%d')}.csv", "w",
-              newline="") as f:
-        csv.writer(f).writerows(rows)
-    print(f"  ✅ Salesforce: {len(rows)-1:,} records")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 6. SCIENCELOGIC — Infrastructure Alert Logs (JSON)
-#    Format: JSONL
-#    Fields: alert_id, timestamp, device_name, device_ip, device_type,
-#            alert_message, severity, component, metric_name,
-#            metric_value, threshold_value, acknowledged, location
-# ─────────────────────────────────────────────────────────────────────
-def generate_sciencelogic(days):
-    out = BASE / "sciencelogic"
-    out.mkdir(parents=True, exist_ok=True)
-    now = datetime.now()
-
-    alert_templates = [
-        # WAN alerts — tied to NetScout degraded segments
-        ("DISA-WAN-DC-01-RTR","198.18.10.1","ROUTER",
-         "Interface Gi0/1 packet loss exceeded 3% threshold","CRITICAL",
-         "network_interface","packet_loss_pct",3.84,1.0),
-        ("DISA-WAN-PENTAGON-RTR","198.18.20.1","ROUTER",
-         "CPU utilization exceeded 90% — hardware issue suspected","CRITICAL",
-         "system_cpu","cpu_utilization_pct",94.2,85.0),
-        ("DISA-WAN-MEADE-RTR","198.18.30.1","ROUTER",
-         "Interface bandwidth utilization at 94% — link saturation","HIGH",
-         "network_interface","bandwidth_util_pct",94.1,80.0),
-        ("DISA-LAN-ARLINGTON-SW1","10.20.1.1","SWITCH",
-         "Duplex mismatch detected on uplink Gi1/0/48","HIGH",
-         "network_interface","error_count",8412,100),
-        # Server/Infrastructure alerts
-        ("DISA-DC-APP-SRV-01","10.100.1.10","SERVER",
-         "Microsoft Teams media gateway: high drop rate on RTP streams","CRITICAL",
-         "application","rtp_drop_rate_pct",8.2,2.0),
-        ("DISA-DC-SQL-01","10.100.2.10","DATABASE",
-         "ServiceNow DB connection pool at 98% capacity","HIGH",
-         "database","connection_pool_pct",98.0,80.0),
-        ("DISA-DC-MAIL-01","10.100.3.10","SERVER",
-         "Exchange SMTP queue depth: 8,421 messages — delivery delay","HIGH",
-         "application","smtp_queue_depth",8421,1000),
-        ("DISA-DC-DNS-PRIM","10.200.1.10","DNS_SERVER",
-         "DNS query response time elevated: 380ms avg (threshold: 50ms)","HIGH",
-         "dns","avg_response_ms",380,50),
-        ("DISA-DC-VPN-01","10.100.4.10","VPN_GATEWAY",
-         "IKEv2 SA renegotiation failures: 284 in last hour","MEDIUM",
-         "vpn","sa_failure_count",284,50),
-        ("DISA-DC-SAP-01","10.100.5.10","APPLICATION",
-         "SAP work process utilization at 97% — batch job contention","HIGH",
-         "application","work_process_pct",97.0,80.0),
-        # Security alerts
-        ("DISA-FW-PERIMETER-01","198.18.1.1","FIREWALL",
-         "Blocked connection attempt from suspicious IP 45.33.32.156","MEDIUM",
-         "security","blocked_connections",1284,100),
-        ("DISA-IDS-SENSOR-01","10.100.0.5","IDS",
-         "Signature match: Possible C2 beacon traffic detected","HIGH",
-         "security","ids_alert_count",3,1),
-        ("DISA-DC-SIEM-01","10.100.6.10","SIEM",
-         "Splunk alert storm: 40,821 low-priority events in 1 hour","LOW",
-         "application","alert_count",40821,1000),
-        # Storage / capacity
-        ("DISA-DC-NAS-01","10.100.7.10","STORAGE",
-         "NAS volume /data/apps at 94% capacity — growth rate 2GB/day","MEDIUM",
-         "storage","disk_utilization_pct",94.0,85.0),
-        ("DISA-DC-BACKUP-01","10.100.8.10","BACKUP",
-         "Backup job PROD-SQL-DAILY failed — target volume full","HIGH",
-         "backup","job_status",0,1),
-    ]
 
     records = []
-    for i in range(int(days * 1500)):
-        dt   = now - timedelta(seconds=random.randint(0, int(days*86400)))
-        tmpl = random.choice(alert_templates)
-        (dname, dip, dtype, msg, sev, comp,
-         metric, mval, thresh) = tmpl
+    for _ in range(int(days * 1500)):
+        dt      = rand_dt(days)
+        # Round to 5-min boundary
+        ts_dt   = dt.replace(second=0, microsecond=0)
+        ts_dt   = ts_dt - timedelta(minutes=ts_dt.minute % 5)
+        app_tpl = random.choice(NETSCOUT_APPS)
+        app_name, app_group, app_proto = app_tpl
+        sensor  = random.choice(SENSORS)
+        alias   = sensor.split(":::")[0][:5]
+        iface   = random.choice(INTERFACES)
+        vlan    = random.choice(VLANS)
+        client_ip = rand_ip()
+        server_ip = rand_ip(private=False)
+        server_port = random.choice([80, 443, 8443, 8080])
 
-        # Add some jitter to metric values
-        actual_val = round(mval * random.uniform(0.85, 1.15), 2)
-        is_alert   = actual_val >= thresh
-        if not is_alert and random.random() > 0.3:
-            continue  # Skip most non-alert records
+        # Degrade certain apps during peak hours
+        is_peak = 8 <= dt.hour <= 18
+        is_degraded = app_name in ("Microsoft Teams", "Zoom", "Audio") and is_peak
+        timeouts = random.randint(5, 80) if is_degraded else random.randint(0, 3)
+        rt_ms    = random.randint(800, 3000) if is_degraded else random.randint(10, 400)
+        failed   = random.randint(2, 20) if is_degraded else random.randint(0, 2)
 
         records.append({
-            "alert_id":        f"SLEM-{random.randint(100000,999999)}",
-            "timestamp":       fmt(dt),
-            "device_name":     dname,
-            "device_ip":       dip,
-            "device_type":     dtype,
-            "alert_message":   msg,
-            "severity":        sev if actual_val >= thresh else "INFO",
-            "component":       comp,
-            "metric_name":     metric,
-            "metric_value":    actual_val,
-            "threshold_value": thresh,
-            "acknowledged":    random.random() < 0.6,
-            "location":        random.choice([s[2] for s in SEGMENTS]),
-            "assigned_team":   random.choice(TEAMS),
-            "ticket_id":       f"INC-2024-{random.randint(8800,8900)}"
-                               if random.random() < 0.4 else None,
-            "data_source":     "SCIENCELOGIC",
+            "timestamp":            ts_dt.strftime("%Y-%m-%d %H:%M:%S.000000 UTC"),
+            "client_host_ip_address": client_ip,
+            "server_host_ip_address": server_ip,
+            "server_port":           server_port,
+            "client_site":           random.choice(NETSCOUT_SITES),
+            "client_community":      random.choice(["NIPR", "SIPR", "RAVPN"]),
+            "server_site":           random.choice(NETSCOUT_SITES),
+            "server_community":      random.choice(["NIPR", "SIPR"]),
+            "vlan_id":               vlan,
+            "vlan_alias":            "",
+            "application_name":      app_name,
+            "application_group":     app_group,
+            "ai_sensor_name":        sensor,
+            "device_alias":          alias,
+            "device_interface_alias": iface,
+            "transaction_status":    random.choice(["success", "failure", None]),
+            "message_name":          "Data",
+            "response_code":         random.choice([200, 404, 503, None]),
+            "retries":               random.randint(0, 5),
+            "peak_response_time":    rt_ms * 2,
+            "total_response_time":   rt_ms * random.randint(10, 200),
+            "successful_transactions": random.randint(50, 5000),
+            "failed_transactions":   failed,
+            "failed_connections":    random.randint(0, failed),
+            "timeouts":              timeouts,
+            "agedout_sessions":      random.randint(0, 10),
+            "active_sessions":       random.randint(5, 500),
+            "new_sessions":          random.randint(1, 100),
+            "max_active_sessions":   random.randint(100, 2000),
+            "response_time_bucket_1": max(0, rt_ms - 100),
+            "response_time_bucket_3": rt_ms,
+            "response_time_bucket_5": rt_ms + 200,
+            "to_server_packets":     random.randint(10, 5000),
+            "from_server_packets":   random.randint(10, 5000),
+            "to_server_octets":      random.randint(1000, 5_000_000),
+            "from_server_octets":    random.randint(1000, 5_000_000),
+            "syn_count":             random.randint(1, 100),
+            "syn_ack_count":         random.randint(1, 100),
+            "server_client_retries_count": random.randint(0, 50),
+            "client_server_retries_count": random.randint(0, 50),
         })
 
     records.sort(key=lambda r: r["timestamp"])
-    with open(out / f"sciencelogic_alerts_{now.strftime('%Y%m%d')}.jsonl","w") as f:
+    path = out / f"netscout_app_{TODAY}.jsonl"
+    with open(path, "w") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
-    print(f"  ✅ ScienceLogic: {len(records):,} records")
+    print(f"  ✅ Netscout App: {len(records):,} records → {path}")
 
 
-# ─────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════
+# 5. NETSCOUT THROUGHPUT — Bandwidth Throughput JSON
+#    → gold.network_performance_summary
+# ════════════════════════════════════════════════════════════════════
+def generate_netscout_throughput(days: int):
+    out = BASE / "netscout_throughput"
+    out.mkdir(parents=True, exist_ok=True)
+
+    records = []
+    for _ in range(int(days * 1200)):
+        dt     = rand_dt(days)
+        ts_dt  = dt.replace(second=0, microsecond=0)
+        ts_dt  = ts_dt - timedelta(minutes=ts_dt.minute % 5)
+        sensor = random.choice(SENSORS)
+        alias  = sensor.split(":::")[0][:5]
+        iface  = random.choice(INTERFACES)
+        vlan   = random.choice(VLANS)
+        app_tpl = random.choice(NETSCOUT_APPS)
+        app_name, app_group, _ = app_tpl
+
+        # Simulate congested interfaces
+        is_congested = "ISP_40G-1" in iface and 8 <= dt.hour <= 18
+        pkts_out = random.randint(500, 5000) if is_congested else random.randint(10, 500)
+        oct_out  = pkts_out * random.randint(200, 1500)
+        peak_out = int(oct_out * random.uniform(1.2, 2.5))
+
+        records.append({
+            "timestamp":              ts_dt.strftime("%Y-%m-%d %H:%M:%S.000000 UTC"),
+            "device":                 sensor,
+            "device_alias":           alias,
+            "device_interface_alias": iface,
+            "application":            app_name,
+            "application_group":      app_group,
+            "vlan_id":                vlan,
+            "vlan_alias":             "",
+            "client_site":            random.choice(NETSCOUT_SITES),
+            "server_site":            random.choice(NETSCOUT_SITES),
+            "octets_in":              random.randint(0, oct_out // 2),
+            "octets_out":             oct_out,
+            "packets_in":             random.randint(0, pkts_out // 2),
+            "packets_out":            pkts_out,
+            "peak_bytes_in":          random.randint(0, peak_out // 4),
+            "peak_bytes_out":         peak_out,
+            "peak_packets_in":        0,
+            "peak_packets_out":       0,
+            "peak_time_in_measure":   0,
+            "peak_time_out_measure":  random.randint(100, 900),
+        })
+
+    records.sort(key=lambda r: r["timestamp"])
+    path = out / f"netscout_throughput_{TODAY}.jsonl"
+    with open(path, "w") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+    print(f"  ✅ Netscout Throughput: {len(records):,} records → {path}")
+
+
+# ════════════════════════════════════════════════════════════════════
+# 6. DATANX — Network Inventory JSON (system + port + inventory)
+#    → gold.device_health_summary + version_sprawl_summary
+# ════════════════════════════════════════════════════════════════════
+def generate_datanx(days: int):
+    out = BASE / "datanx"
+    out.mkdir(parents=True, exist_ok=True)
+
+    # System records
+    systems = []
+    for i, node in enumerate(NODES):
+        dt   = rand_dt(days)
+        part = random.choice(HARDWARE_PARTS)
+        pnum, model, clei = part
+        systems.append({
+            "DEVICE_NAME":  node.upper(),
+            "ELEMENT":      "System-1",
+            "IP-ADDRESS":   rand_ip(),
+            "VERSION":      random.choice(["3.42A","3.51B","4.01C","12.4(24)T","15.6(3)M","17.9.4a"]),
+            "NODE-TYPE":    random.choice(DEVICE_TYPES),
+            "ADMIN-STATUS": random.choice(["UP", "UP", "UP", "DOWN"]),
+            "LAST-UPDATE":  dt.strftime("%Y%m%d"),
+            "il5-uuid":     f"{random.randint(10000000,99999999):08x}-"
+                            f"{random.randint(1000,9999):04x}-"
+                            f"{random.randint(1000,9999):04x}-"
+                            f"{random.randint(1000,9999):04x}-"
+                            f"{random.randint(100000000000,999999999999):012x}",
+            "il5-timestamp": int(dt.timestamp() * 1000),
+            "data_source":  "DATANX_SYSTEM",
+        })
+
+    # Port records
+    ports = []
+    for node in NODES:
+        num_ports = random.randint(2, 8)
+        for p in range(num_ports):
+            dt   = rand_dt(days)
+            vlan = random.choice(VLANS)
+            bw   = random.choice(["1000000.00","10000000.00","40000000.00","100000000.00"])
+            ports.append({
+                "DEVICE_NAME":    node.upper(),
+                "ELEMENT":        f"interface GigabitEthernet{p//4}/{p%4}/{random.randint(0,47)}",
+                "BANDWIDTH":      bw,
+                "IP-ADDRESS":     rand_ip(),
+                "PARENT":         "System-1",
+                "ADMIN-STATUS":   random.choice(["UP","UP","UP","DOWN"]),
+                "OP-STATUS":      random.choice(["O","O","O","M"]),
+                "VRF":            random.choice(["default","MGMT","N/A"]),
+                "VLAN":           str(vlan),
+                "SERVICE-TYPE":   random.choice(["NET","MGT","SVC","N/A"]),
+                "LAST-UPDATE":    dt.strftime("%Y%m%d"),
+                "DIRECTION":      random.choice(["IN","OUT","BOTH","N/A"]),
+                "il5-uuid":       f"{random.randint(10000000,99999999):08x}-"
+                                  f"{random.randint(1000,9999):04x}-"
+                                  f"{random.randint(1000,9999):04x}-"
+                                  f"{random.randint(1000,9999):04x}-"
+                                  f"{random.randint(100000000000,999999999999):012x}",
+                "il5-timestamp":  int(dt.timestamp() * 1000),
+                "data_source":    "DATANX_PORT",
+            })
+
+    # Inventory (hardware slots/modules)
+    inventory = []
+    for node in NODES:
+        num_slots = random.randint(2, 16)
+        for slot in range(num_slots):
+            dt   = rand_dt(days)
+            part = random.choice(HARDWARE_PARTS)
+            pnum, model, clei = part
+            inventory.append({
+                "DEVICE_NAME":    node.upper(),
+                "ELEMENT":        f"SLOT-{slot}",
+                "PARTNUM":        pnum,
+                "ADMIN-STATUS":   random.choice(["UP","UP","UP","DOWN"]),
+                "CLEI":           clei,
+                "PARTID":         f"{random.randint(0,99):02d}",
+                "SERIALNUM":      f"CAT{random.randint(1000,9999):04d}{''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',k=4))}",
+                "VERSION":        f"V{random.randint(0,9):02d}",
+                "FWREV":          str(random.randint(100,200)),
+                "HWREV":          random.choice(["A0","B0","C0","D0"]),
+                "DESCRIPTION":    model,
+                "MODEL":          f"N/A",
+                "PROTECT-STATUS": random.choice(["ACT","STBY","N/A"]),
+                "PARENT":         "System-1",
+                "LAST-UPDATE":    dt.strftime("%Y%m%d"),
+                "il5-uuid":       f"{random.randint(10000000,99999999):08x}-"
+                                  f"{random.randint(1000,9999):04x}-"
+                                  f"{random.randint(1000,9999):04x}-"
+                                  f"{random.randint(1000,9999):04x}-"
+                                  f"{random.randint(100000000000,999999999999):012x}",
+                "il5-timestamp":  int(dt.timestamp() * 1000),
+                "data_source":    "DATANX_INVENTORY",
+            })
+
+    all_records = systems + ports + inventory
+    random.shuffle(all_records)
+
+    path = out / f"datanx_inventory_{TODAY}.jsonl"
+    with open(path, "w") as f:
+        for r in all_records:
+            f.write(json.dumps(r) + "\n")
+    print(f"  ✅ DataNX: {len(systems)} systems + {len(ports)} ports + {len(inventory)} inventory → {path}")
+
+
+# ═══════════════════════════════════════════════════════════════════
 # MAIN
-# ─────────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate OE mock log files")
+    parser = argparse.ArgumentParser(description="Generate OE mock logs (real schemas)")
     parser.add_argument("--days", type=int, default=1,
                         help="Days of history to generate (default: 1)")
     args = parser.parse_args()
 
-    print(f"\n🔄 Generating {args.days} day(s) of mock logs...\n")
-    generate_aternity(args.days)
-    generate_netscout(args.days)
-    generate_intune(args.days)
-    generate_infoblox(args.days)
-    generate_salesforce(args.days)
-    generate_sciencelogic(args.days)
+    print(f"\n🔄  Generating {args.days} day(s) of mock logs (real schemas)...\n")
+    generate_netcool(args.days)
+    generate_dxnetops(args.days)
+    generate_elastiflow(args.days)
+    generate_netscout_app(args.days)
+    generate_netscout_throughput(args.days)
+    generate_datanx(args.days)
 
-    total = sum(len(list((BASE/d).rglob("*.*")))
-                for d in ["aternity","netscout","intune",
-                          "infoblox","salesforce","sciencelogic"])
-    print(f"\n✅ Done! {total} log files written to mock-logs/")
+    print(f"\n✅  Done — files written to mock-logs/")
     print("   Run the ingestion pipeline next:")
     print("   python pipelines/run_pipeline.py")
