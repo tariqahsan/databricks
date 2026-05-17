@@ -77,7 +77,7 @@ def gold_app_health_summary(spark: SparkSession):
         .withColumn("last_updated",  current_timestamp())
 
     path = Paths.gold("app_health_summary")
-    gold.write.format("delta").mode("overwrite").save(path)
+    gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
     print(f"   ✅ {gold.count()} apps → gold.app_health_summary")
 
 
@@ -255,7 +255,7 @@ def gold_device_health(spark: SparkSession):
         .withColumn("last_updated",   current_timestamp())
 
     path = Paths.gold("device_health_summary")
-    gold.write.format("delta").mode("overwrite").save(path)
+    gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
     print(f"   ✅ {gold.count()} devices → gold.device_health_summary")
 
 
@@ -288,7 +288,7 @@ def gold_dns_metrics(spark: SparkSession):
         .withColumn("snapshot_hour", current_timestamp())
 
     path = Paths.gold("dns_metrics")
-    gold.write.format("delta").mode("overwrite").save(path)
+    gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
     print(f"   ✅ {gold.count()} sensors → gold.dns_metrics")
 
 
@@ -346,7 +346,7 @@ def gold_top_issues(spark: SparkSession):
                 "occurrence_count","sla_breached","snapshot_date")
 
     path = Paths.gold("top_issues_summary")
-    gold.write.format("delta").mode("overwrite").save(path)
+    gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
     print(f"   ✅ {gold.count()} issues → gold.top_issues_summary")
 
 
@@ -407,7 +407,7 @@ def gold_version_sprawl(spark: SparkSession):
         .withColumn("snapshot_date", current_date())
 
     path = Paths.gold("version_sprawl_summary")
-    gold.write.format("delta").mode("overwrite").save(path)
+    gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
     print(f"   ✅ {gold.count()} versions → gold.version_sprawl_summary")
 
 
@@ -459,7 +459,7 @@ def gold_ingestion_status(spark: SparkSession):
         .withColumn("snapshot_date",     current_date())
 
     path = Paths.gold("data_source_ingestion_status")
-    gold.write.format("delta").mode("overwrite").save(path)
+    gold.write.format("delta").mode("overwrite").option("overwriteSchema", "true").save(path)
     print(f"   ✅ {gold.count()} sources → gold.data_source_ingestion_status")
 
 

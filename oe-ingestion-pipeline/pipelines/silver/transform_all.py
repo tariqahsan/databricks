@@ -336,6 +336,7 @@ def silver_datanx(spark: SparkSession):
 
 
 def _upsert_or_create(spark, df, path, key):
+    df = df.dropDuplicates([key])  # prevent MERGE ambiguity
     if DeltaTable.isDeltaTable(spark, path):
         DeltaTable.forPath(spark, path).alias("t") \
             .merge(df.alias("s"), f"t.`{key}` = s.`{key}`") \
