@@ -10,10 +10,12 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
-/** Source: Microsoft Intune (Device Management) */
+/** Source: DXNETOPS (Device CPU, Memory & Performance Metrics) */
 @Repository
 public class DeviceHealthRepository {
 
@@ -23,6 +25,18 @@ public class DeviceHealthRepository {
     public DeviceHealthRepository(NamedParameterJdbcTemplate jdbc, TableNames tables) {
         this.jdbc   = jdbc;
         this.tables = tables;
+    }
+
+    // ── Hive JDBC compatibility ───────────────────────────────────────────
+    private static BigDecimal bd(ResultSet rs, String col) throws SQLException {
+        double v = rs.getDouble(col);
+        return rs.wasNull() ? null : BigDecimal.valueOf(v);
+    }
+
+    private static BigDecimal bd(Object val) {
+        if (val == null) return null;
+        if (val instanceof BigDecimal b) return b;
+        return BigDecimal.valueOf(((Number) val).doubleValue());
     }
 
     @Retryable(retryFor = Exception.class, maxAttempts = 3,
@@ -69,7 +83,7 @@ public class DeviceHealthRepository {
             Collections.emptyMap(), (rs, i) -> new ComplianceByType(
                 rs.getString("device_type"), rs.getInt("total"),
                 rs.getInt("compliant"), rs.getInt("non_compliant"),
-                rs.getBigDecimal("compliance_rate")));
+                bd(rs, "compliance_rate")));
 
         List<OsDistribution> os = jdbc.query(osSql,
             Collections.emptyMap(), (rs, i) -> new OsDistribution(
@@ -88,7 +102,7 @@ public class DeviceHealthRepository {
             ((Number) r.get("non_compliant")).intValue(),
             ((Number) r.get("unknown")).intValue(),
             rate,
-            (BigDecimal) r.get("avg_health"),
+            bd(r.get("avg_health")),
             ((Number) r.get("not_checked_in")).intValue(),
             ((Number) r.get("encrypted")).intValue(),
             byType, os);
@@ -119,7 +133,7 @@ public class DeviceHealthRepository {
                 rs.getString("device_id"), rs.getString("device_name"),
                 rs.getString("device_type"), rs.getString("os_name"),
                 rs.getString("os_version"), rs.getString("compliance_state"),
-                rs.getBigDecimal("health_score"),
+                bd(rs, "health_score"),
                 rs.getString("enrollment_status"),
                 rs.getTimestamp("last_check_in") != null
                     ? rs.getTimestamp("last_check_in").toLocalDateTime() : null,

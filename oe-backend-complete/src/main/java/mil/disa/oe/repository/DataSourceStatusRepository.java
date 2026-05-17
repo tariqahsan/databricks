@@ -7,10 +7,13 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
-/** Pipeline ingestion status — all 6 source systems */
+/** Pipeline ingestion status — NETCOOL · DXNETOPS · ElastiFlow · Netscout App · Netscout Throughput · DataNX */
 @Repository
 public class DataSourceStatusRepository {
 
@@ -20,6 +23,12 @@ public class DataSourceStatusRepository {
     public DataSourceStatusRepository(NamedParameterJdbcTemplate jdbc, TableNames tables) {
         this.jdbc   = jdbc;
         this.tables = tables;
+    }
+
+    // ── Hive JDBC compatibility ───────────────────────────────────────────
+    private static BigDecimal bd(ResultSet rs, String col) throws SQLException {
+        double v = rs.getDouble(col);
+        return rs.wasNull() ? null : BigDecimal.valueOf(v);
     }
 
     @Retryable(retryFor = Exception.class, maxAttempts = 3,
@@ -47,7 +56,7 @@ public class DataSourceStatusRepository {
                     ? rs.getTimestamp("next_scheduled_at").toLocalDateTime() : null,
                 rs.getLong("records_last_batch"),
                 rs.getLong("total_records_today"),
-                rs.getBigDecimal("data_quality_score"),
+                bd(rs, "data_quality_score"),
                 rs.getLong("latency_ms"),
                 rs.getString("bronze_table"),
                 rs.getString("silver_table"),

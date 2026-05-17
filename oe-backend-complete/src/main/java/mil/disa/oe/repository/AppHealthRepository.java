@@ -8,10 +8,13 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
-/** Source: Aternity (End User Experience Monitoring) */
+/** Source: Netscout App (application performance) + ElastiFlow (network flows) */
 @Repository
 public class AppHealthRepository {
 
@@ -21,6 +24,24 @@ public class AppHealthRepository {
     public AppHealthRepository(NamedParameterJdbcTemplate jdbc, TableNames tables) {
         this.jdbc   = jdbc;
         this.tables = tables;
+    }
+
+    // ── Hive JDBC compatibility ───────────────────────────────────────────
+    // Hive JDBC 3.1.x returns DOUBLE/FLOAT columns as java.lang.Double,
+    // not java.math.BigDecimal. Databricks JDBC returns BigDecimal.
+    // These helpers normalise the conversion so both drivers work correctly.
+
+    /** Read a numeric column from ResultSet as BigDecimal (Hive-safe). */
+    private static BigDecimal bd(ResultSet rs, String col) throws SQLException {
+        double v = rs.getDouble(col);
+        return rs.wasNull() ? null : BigDecimal.valueOf(v);
+    }
+
+    /** Convert a value from queryForMap() to BigDecimal (Hive-safe). */
+    private static BigDecimal bd(Object val) {
+        if (val == null) return null;
+        if (val instanceof BigDecimal b) return b;
+        return BigDecimal.valueOf(((Number) val).doubleValue());
     }
 
     @Retryable(retryFor = Exception.class, maxAttempts = 3,
@@ -55,8 +76,8 @@ public class AppHealthRepository {
             Collections.emptyMap(), (rs, i) -> new DegradedApp(
                 rs.getString("app_name"),
                 rs.getString("severity"),
-                rs.getBigDecimal("experience_score"),
-                rs.getBigDecimal("degradation_pct"),
+                bd(rs, "experience_score"),
+                bd(rs, "degradation_pct"),
                 rs.getString("primary_cause"),
                 rs.getInt("affected_users")));
 
@@ -65,8 +86,8 @@ public class AppHealthRepository {
             ((Number) row.get("healthy")).intValue(),
             ((Number) row.get("degraded")).intValue(),
             ((Number) row.get("critical")).intValue(),
-            (java.math.BigDecimal) row.get("avg_score"),
-            (java.math.BigDecimal) row.get("avg_response_ms"),
+            bd(row.get("avg_score")),
+            bd(row.get("avg_response_ms")),
             ((Number) row.get("total_users")).intValue(),
             degraded);
     }
@@ -88,11 +109,12 @@ public class AppHealthRepository {
         return jdbc.query(sql, Collections.emptyMap(), (rs, i) ->
             new AppHealthSummary(
                 rs.getString("app_name"), rs.getString("app_category"),
-                rs.getBigDecimal("experience_score"),
-                rs.getBigDecimal("avg_response_time_ms"),
-                rs.getBigDecimal("p95_response_time_ms"),
-                rs.getBigDecimal("p99_response_time_ms"),
-                rs.getBigDecimal("crash_rate"), rs.getBigDecimal("error_rate"),
+                bd(rs, "experience_score"),
+                bd(rs, "avg_response_time_ms"),
+                bd(rs, "p95_response_time_ms"),
+                bd(rs, "p99_response_time_ms"),
+                bd(rs, "crash_rate"),
+                bd(rs, "error_rate"),
                 rs.getInt("active_user_count"), rs.getInt("total_session_count"),
                 rs.getString("health_status"), rs.getString("trend"),
                 rs.getTimestamp("last_updated") != null
@@ -117,8 +139,8 @@ public class AppHealthRepository {
                 .addValue("hours",   hours),
             (rs, i) -> new AppHealthTrend(
                 rs.getString("app_name"), rs.getString("timestamp"),
-                rs.getBigDecimal("experience_score"),
-                rs.getBigDecimal("response_time_ms"),
+                bd(rs, "experience_score"),
+                bd(rs, "response_time_ms"),
                 rs.getInt("error_count")));
     }
 }

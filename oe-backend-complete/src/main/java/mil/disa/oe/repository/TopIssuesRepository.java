@@ -7,10 +7,13 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
-/** Source: ScienceLogic (infrastructure alerts) + Salesforce (tickets) */
+/** Source: NETCOOL (Network Event Management & Alerting) */
 @Repository
 public class TopIssuesRepository {
 
@@ -20,6 +23,18 @@ public class TopIssuesRepository {
     public TopIssuesRepository(NamedParameterJdbcTemplate jdbc, TableNames tables) {
         this.jdbc   = jdbc;
         this.tables = tables;
+    }
+
+    // ── Hive JDBC compatibility ───────────────────────────────────────────
+    private static BigDecimal bd(ResultSet rs, String col) throws SQLException {
+        double v = rs.getDouble(col);
+        return rs.wasNull() ? null : BigDecimal.valueOf(v);
+    }
+
+    private static BigDecimal bd(Object val) {
+        if (val == null) return null;
+        if (val instanceof BigDecimal b) return b;
+        return BigDecimal.valueOf(((Number) val).doubleValue());
     }
 
     @Retryable(retryFor = Exception.class, maxAttempts = 3,
@@ -80,7 +95,7 @@ public class TopIssuesRepository {
         List<IssuesByCategory> byCat = jdbc.query(byCatSql,
             Collections.emptyMap(), (rs, i) -> new IssuesByCategory(
                 rs.getString("category"), rs.getInt("open_count"),
-                rs.getInt("resolved_count"), rs.getBigDecimal("avg_mttr")));
+                rs.getInt("resolved_count"), bd(rs, "avg_mttr")));
 
         List<TrendingIssue> trending = jdbc.query(trendingSql,
             Collections.emptyMap(), (rs, i) -> new TrendingIssue(
@@ -108,8 +123,8 @@ public class TopIssuesRepository {
             ((Number) r.get("p4_open")).intValue(),
             ((Number) r.get("total_open")).intValue(),
             ((Number) r.get("resolved_today")).intValue(),
-            (java.math.BigDecimal) r.get("avg_mttr_hours"),
-            (java.math.BigDecimal) r.get("sla_breach_rate"),
+            bd(r.get("avg_mttr_hours")),
+            bd(r.get("sla_breach_rate")),
             byCat, trending, critical);
     }
 }

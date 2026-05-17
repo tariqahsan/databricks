@@ -8,10 +8,13 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
-/** Source: NetScout (network flows) + Infoblox (DNS/DHCP/IPAM) */
+/** Source: ElastiFlow (IPFIX network flows) + Netscout Throughput (bandwidth monitoring) */
 @Repository
 public class NetworkPerformanceRepository {
 
@@ -21,6 +24,18 @@ public class NetworkPerformanceRepository {
     public NetworkPerformanceRepository(NamedParameterJdbcTemplate jdbc, TableNames tables) {
         this.jdbc   = jdbc;
         this.tables = tables;
+    }
+
+    // ── Hive JDBC compatibility ───────────────────────────────────────────
+    private static BigDecimal bd(ResultSet rs, String col) throws SQLException {
+        double v = rs.getDouble(col);
+        return rs.wasNull() ? null : BigDecimal.valueOf(v);
+    }
+
+    private static BigDecimal bd(Object val) {
+        if (val == null) return null;
+        if (val instanceof BigDecimal b) return b;
+        return BigDecimal.valueOf(((Number) val).doubleValue());
     }
 
     @Retryable(retryFor = Exception.class, maxAttempts = 3,
@@ -67,26 +82,26 @@ public class NetworkPerformanceRepository {
         List<PacketLossRootCause> rootCauses = jdbc.query(rootCauseSql,
             Collections.emptyMap(), (rs, i) -> new PacketLossRootCause(
                 rs.getString("segment_name"), rs.getString("root_cause"),
-                rs.getBigDecimal("packet_loss_rate"),
-                rs.getBigDecimal("confidence"),
+                bd(rs, "packet_loss_rate"),
+                bd(rs, "confidence"),
                 rs.getInt("affected_flows"),
                 rs.getString("recommendation"), rs.getString("severity")));
 
         List<NetworkTrend> trend = jdbc.query(trendSql,
             Collections.emptyMap(), (rs, i) -> new NetworkTrend(
                 rs.getString("timestamp"),
-                rs.getBigDecimal("packet_loss_rate"),
-                rs.getBigDecimal("avg_latency_ms"),
-                rs.getBigDecimal("bandwidth_utilization")));
+                bd(rs, "packet_loss_rate"),
+                bd(rs, "avg_latency_ms"),
+                bd(rs, "bandwidth_utilization")));
 
         return new NetworkKpis(
             ((Number) row.get("total_segments")).intValue(),
             ((Number) row.get("healthy")).intValue(),
             ((Number) row.get("degraded")).intValue(),
             ((Number) row.get("critical")).intValue(),
-            (java.math.BigDecimal) row.get("avg_packet_loss"),
-            (java.math.BigDecimal) row.get("avg_latency"),
-            (java.math.BigDecimal) row.get("avg_availability"),
+            bd(row.get("avg_packet_loss")),
+            bd(row.get("avg_latency")),
+            bd(row.get("avg_availability")),
             ((Number) row.get("total_anomalies")).longValue(),
             rootCauses, trend);
     }
@@ -111,12 +126,12 @@ public class NetworkPerformanceRepository {
             (rs, i) -> new NetworkPerformanceSummary(
                 rs.getString("segment_id"), rs.getString("segment_name"),
                 rs.getString("segment_type"), rs.getString("location"),
-                rs.getBigDecimal("packet_loss_rate"),
-                rs.getBigDecimal("avg_latency_ms"),
-                rs.getBigDecimal("p95_latency_ms"),
-                rs.getBigDecimal("jitter_ms"),
-                rs.getBigDecimal("bandwidth_utilization"),
-                rs.getBigDecimal("availability_rate"),
+                bd(rs, "packet_loss_rate"),
+                bd(rs, "avg_latency_ms"),
+                bd(rs, "p95_latency_ms"),
+                bd(rs, "jitter_ms"),
+                bd(rs, "bandwidth_utilization"),
+                bd(rs, "availability_rate"),
                 rs.getLong("total_flows"), rs.getLong("anomaly_count"),
                 rs.getString("health_status"),
                 rs.getTimestamp("last_updated") != null
@@ -138,8 +153,8 @@ public class NetworkPerformanceRepository {
             new DnsMetrics(
                 rs.getString("server"),
                 rs.getLong("total_queries"), rs.getLong("failed_queries"),
-                rs.getBigDecimal("failure_rate"),
-                rs.getBigDecimal("avg_response_ms"),
+                bd(rs, "failure_rate"),
+                bd(rs, "avg_response_ms"),
                 rs.getLong("nxdomain_count"), rs.getLong("timeout_count")));
     }
 }

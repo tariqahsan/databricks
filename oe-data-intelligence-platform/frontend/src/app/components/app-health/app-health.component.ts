@@ -16,8 +16,11 @@ import { AppHealthKpis, AppHealthSummary } from '../../models/models';
   template: `
 <div class="page-container">
   <h1 class="page-title"><mat-icon>apps</mat-icon> App Health</h1>
-  <p class="source-note">Source: <strong>Aternity</strong> —
-    End User Experience Monitoring</p>
+  <p class="source-note">
+    Sources:
+    <strong>Netscout App</strong> (application performance) ·
+    <strong>ElastiFlow</strong> (network flows)
+  </p>
 
   <mat-spinner *ngIf="loading" diameter="40"></mat-spinner>
 
@@ -51,6 +54,9 @@ import { AppHealthKpis, AppHealthSummary } from '../../models/models';
   <mat-card *ngIf="!loading && apps.length" class="table-card">
     <mat-card-header>
       <mat-card-title>Application Performance</mat-card-title>
+      <mat-card-subtitle>
+        Netscout App · ElastiFlow — real-time application telemetry
+      </mat-card-subtitle>
     </mat-card-header>
     <mat-card-content>
       <table class="data-table">
@@ -93,6 +99,12 @@ import { AppHealthKpis, AppHealthSummary } from '../../models/models';
       </table>
     </mat-card-content>
   </mat-card>
+
+  <div *ngIf="!loading && !apps.length" class="empty-state">
+    <mat-icon>info_outline</mat-icon>
+    <p>No data for today. Run the ingestion pipeline to refresh.</p>
+    <code>python scripts/generate_mock_logs.py --days 1 && python run_pipeline.py</code>
+  </div>
 </div>
   `,
   styles: [`
@@ -116,6 +128,10 @@ import { AppHealthKpis, AppHealthSummary } from '../../models/models';
     .s-healthy      { background:#e8f5e9; color:#2e7d32; }
     .s-degraded     { background:#fff8e1; color:#e65100; }
     .s-critical     { background:#ffebee; color:#c62828; }
+    .empty-state    { text-align:center; padding:48px; color:#78909c; }
+    .empty-state mat-icon { font-size:48px; width:48px; height:48px; }
+    .empty-state code { display:block; margin-top:12px; font-size:.8rem;
+                        background:#f5f5f5; padding:8px 16px; border-radius:4px; }
   `]
 })
 export class AppHealthComponent implements OnInit {

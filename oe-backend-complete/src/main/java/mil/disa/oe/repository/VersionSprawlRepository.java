@@ -7,10 +7,13 @@ import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 
-/** Source: Microsoft Intune + Aternity */
+/** Source: DataNX (Network Device & Port Inventory) */
 @Repository
 public class VersionSprawlRepository {
 
@@ -20,6 +23,18 @@ public class VersionSprawlRepository {
     public VersionSprawlRepository(NamedParameterJdbcTemplate jdbc, TableNames tables) {
         this.jdbc   = jdbc;
         this.tables = tables;
+    }
+
+    // ── Hive JDBC compatibility ───────────────────────────────────────────
+    private static BigDecimal bd(ResultSet rs, String col) throws SQLException {
+        double v = rs.getDouble(col);
+        return rs.wasNull() ? null : BigDecimal.valueOf(v);
+    }
+
+    private static BigDecimal bd(Object val) {
+        if (val == null) return null;
+        if (val instanceof BigDecimal b) return b;
+        return BigDecimal.valueOf(((Number) val).doubleValue());
     }
 
     @Retryable(retryFor = Exception.class, maxAttempts = 3,
@@ -72,18 +87,18 @@ public class VersionSprawlRepository {
             Collections.emptyMap(), (rs, i) -> new SprawlByProduct(
                 rs.getString("software_name"), rs.getInt("version_count"),
                 rs.getInt("device_count"), rs.getString("latest_version"),
-                rs.getBigDecimal("pct_on_latest")));
+                bd(rs, "pct_on_latest")));
 
         List<VersionDistribution> osVer = jdbc.query(osVerSql,
             Collections.emptyMap(), (rs, i) -> new VersionDistribution(
                 rs.getString("name"), rs.getString("version"),
-                rs.getInt("count"), rs.getBigDecimal("percentage"),
+                rs.getInt("count"), bd(rs, "percentage"),
                 rs.getBoolean("is_supported")));
 
         return new VersionSprawlKpis(
             ((Number) r.get("total_products")).intValue(),
             ((Number) r.get("with_sprawl")).intValue(),
-            (java.math.BigDecimal) r.get("avg_versions"),
+            bd(r.get("avg_versions")),
             ((Number) r.get("on_latest_os")).intValue(),
             ((Number) r.get("unsupported_os")).intValue(),
             ((Number) r.get("apps_with_cves")).intValue(),
