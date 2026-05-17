@@ -40,6 +40,25 @@ services:
     entrypoint: /opt/spark/bin/spark-class
     command: "org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
 
+  # ── Spark Thrift Server ────────────────────────────────────────────
+  # Local equivalent of Databricks SQL Warehouse.
+  # Spring Boot connects: jdbc:hive2://localhost:10000/default
+  #
+  # FIX — DeltaCatalog ClassNotFoundException on session open:
+  # spark.jars.packages loads Delta onto the USER classloader only.
+  # The catalog plugin system uses the DRIVER system classloader.
+  # spark.driver.extraClassPath forces Delta onto BOTH classloaders
+  # so sessions can find DeltaCatalog when they open.
+  #
+  # The ivy-cache named volume persists downloaded JARs across
+  # container restarts — Ivy never re-downloads after first start.
+  #
+  # FIRST-START NOTE: on a fresh clone, run:
+  #   docker compose up -d
+  #   docker compose restart spark-thrift-server   ← one-time only
+  # This lets spark.jars.packages download the JARs on first start,
+  # then the restart makes them available on extraClassPath.
+  # All subsequent starts work automatically.
   spark-thrift-server:
     image: apache/spark:3.5.3
     container_name: oe-spark-thrift
@@ -52,6 +71,10 @@ services:
       - SPARK_NO_DAEMONIZE=true
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
+    volumes:
+      # Persists Delta + hadoop-aws JARs so extraClassPath always
+      # finds them and Ivy never re-downloads them on restart
+      - ivy-cache:/root/.ivy2
     depends_on:
       spark-master:
         condition: service_healthy
@@ -69,6 +92,7 @@ services:
       --conf spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
       --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
       --conf spark.jars.packages=io.delta:delta-spark_2.12:3.2.0,org.apache.hadoop:hadoop-aws:3.3.4
+      --conf spark.driver.extraClassPath=/root/.ivy2/jars/io.delta_delta-spark_2.12-3.2.0.jar:/root/.ivy2/jars/io.delta_delta-storage-3.2.0.jar:/root/.ivy2/jars/org.antlr_antlr4-runtime-4.9.3.jar:/root/.ivy2/jars/org.apache.hadoop_hadoop-aws-3.3.4.jar:/root/.ivy2/jars/com.amazonaws_aws-java-sdk-bundle-1.12.262.jar
       --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000
       --conf spark.hadoop.fs.s3a.access.key=minioadmin
       --conf spark.hadoop.fs.s3a.secret.key=minioadmin
@@ -85,15 +109,15 @@ services:
     hostname: jupyter
     environment:
       - JUPYTER_TOKEN=databricks
-      # ── Use local[2] — avoids Spark 3.5.0 (Jupyter) vs 3.5.3
+      # Use local[2] — avoids Spark 3.5.0 (Jupyter) vs 3.5.3
       # (worker) version mismatch that causes InvalidClassException
       - SPARK_MASTER=local[2]
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - AWS_ENDPOINT_URL=http://minio:9000
-      # ── Eliminates all sys.path hacks in Python scripts ──────────
-      # project root  → finds pipelines package + run_pipeline.py
-      # project/src   → finds spark_session module
+      # Eliminates all sys.path hacks in Python scripts:
+      #   project root → finds pipelines package + run_pipeline.py
+      #   project/src  → finds spark_session module
       - PYTHONPATH=/home/jovyan/project:/home/jovyan/project/src
     ports:
       - "8888:8888"
@@ -101,10 +125,8 @@ services:
     volumes:
       # Single project-root bind mount — no individual file mounts
       - .:/home/jovyan/project
-      # ── Key fix: mount into before-notebook.d so the image
-      # automatically runs pip install BEFORE launching JupyterLab.
-      # Previously mounted to /usr/local/bin/start-jupyter.sh which
-      # was never called by anything in the startup sequence.
+      # Mount into before-notebook.d so the image automatically runs
+      # pip install BEFORE launching JupyterLab on every container start
       - ./start-jupyter.sh:/usr/local/bin/before-notebook.d/00-install-deps.sh
     working_dir: /home/jovyan/project
     # start.sh runs before-notebook.d scripts then launches jupyter.
@@ -151,6 +173,10 @@ services:
 
 volumes:
   minio-data:
+    driver: local
+  # Persists Ivy JAR cache (Delta Lake, hadoop-aws, etc.) across
+  # container restarts — eliminates re-download on every docker compose up
+  ivy-cache:
     driver: local
 
 networks:
